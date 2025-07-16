@@ -20,6 +20,8 @@ class AlertWord(models.Model):
     user_profile = models.ForeignKey(UserProfile, on_delete=CASCADE)
     # Case-insensitive name for the alert word.
     word = models.TextField()
+    active = models.BooleanField(default=True, db_index=True)
+
 
     class Meta:
         unique_together = ("user_profile", "word")

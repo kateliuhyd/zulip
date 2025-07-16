@@ -14,7 +14,7 @@ from zerver.models.alert_words import flush_realm_alert_words
 
 @cache_with_key(lambda realm: realm_alert_words_cache_key(realm.id), timeout=3600 * 24)
 def alert_words_in_realm(realm: Realm) -> dict[int, list[str]]:
-    user_ids_and_words = AlertWord.objects.filter(realm=realm, user_profile__is_active=True).values(
+    user_ids_and_words = AlertWord.objects.filter(realm=realm, user_profile__is_active=True, active=True).values(
         "user_profile_id", "word"
     )
     user_ids_with_words: dict[int, list[str]] = {}
@@ -47,26 +47,62 @@ def get_alert_word_automaton(realm: Realm) -> ahocorasick.Automaton:
 
 
 def user_alert_words(user_profile: UserProfile) -> list[str]:
-    return list(AlertWord.objects.filter(user_profile=user_profile).values_list("word", flat=True))
+    print(f"user_alert_words")
+    return list(AlertWord.objects.filter(user_profile=user_profile, active=True).values_list("word", flat=True))
+
 
 
 @transaction.atomic(savepoint=False)
 def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) -> list[str]:
-    existing_words_lower = {word.lower() for word in user_alert_words(user_profile)}
+    # existing_words_lower = {word.lower() for word in user_alert_words(user_profile)}
 
     # Keeping the case, use a dictionary to get the set of
     # case-insensitive distinct, new alert words
-    word_dict: dict[str, str] = {}
-    for word in new_words:
-        if word.lower() in existing_words_lower:
-            continue
-        word_dict[word.lower()] = word
+    # word_dict: dict[str, str] = {}
+    # for word in new_words:
+    #     if word.lower() in existing_words_lower:
+    #         continue
+    #     word_dict[word.lower()] = word
 
-    AlertWord.objects.bulk_create(
-        AlertWord(user_profile=user_profile, word=word, realm=user_profile.realm)
-        for word in word_dict.values()
-    )
+    # AlertWord.objects.bulk_create(
+    #     AlertWord(user_profile=user_profile, word=word, realm=user_profile.realm)
+    #     for word in word_dict.values()
+    # )
     # Django bulk_create operations don't flush caches, so we need to do this ourselves.
+    # flush_realm_alert_words(user_profile.realm_id)
+
+#======================================OLD FUNCTION=======================================
+
+    incoming = {w.lower(): w for w in new_words}
+
+    if not incoming:
+        return user_alert_words(user_profile)
+
+    rows = (
+        AlertWord.objects
+        .select_for_update()
+        .filter(user_profile=user_profile)
+    )
+
+    rows = [r for r in rows if r.word.lower() in incoming]
+
+    for row in rows:
+        lw = row.word.lower()
+        if not row.active:
+            row.active = True
+            row.save(update_fields=["active"])
+        incoming.pop(lw, None)
+
+    if incoming:
+        AlertWord.objects.bulk_create(
+            AlertWord(
+                user_profile=user_profile,
+                realm=user_profile.realm,
+                word=word,
+            )
+            for word in incoming.values()
+        )
+
     flush_realm_alert_words(user_profile.realm_id)
 
     return user_alert_words(user_profile)
@@ -74,9 +110,11 @@ def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) ->
 
 @transaction.atomic(savepoint=False)
 def remove_user_alert_words(user_profile: UserProfile, delete_words: Iterable[str]) -> list[str]:
+    print(f"remove_user_alert_words")
     # TODO: Ideally, this would be a bulk query, but Django doesn't have a `__iexact`.
     # We can clean this up if/when PostgreSQL has more native support for case-insensitive fields.
     # If we turn this into a bulk operation, we will need to call flush_realm_alert_words() here.
     for delete_word in delete_words:
-        AlertWord.objects.filter(user_profile=user_profile, word__iexact=delete_word).delete()
+        AlertWord.objects.filter(user_profile=user_profile, word__iexact=delete_word, active=True).update(active=False)
+        flush_realm_alert_words(user_profile.realm_id)
     return user_alert_words(user_profile)
