@@ -14,7 +14,7 @@ from zerver.models.alert_words import flush_realm_alert_words
 
 @cache_with_key(lambda realm: realm_alert_words_cache_key(realm.id), timeout=3600 * 24)
 def alert_words_in_realm(realm: Realm) -> dict[int, list[str]]:
-    user_ids_and_words = AlertWord.objects.filter(realm=realm, user_profile__is_active=True).values(
+    user_ids_and_words = AlertWord.objects.filter(realm=realm, user_profile__is_active=True, deactivated=False,).values(
         "user_profile_id", "word"
     )
     user_ids_with_words: dict[int, list[str]] = {}
@@ -88,4 +88,5 @@ def remove_user_alert_words(user_profile: UserProfile, delete_words: Iterable[st
         # Mark the alert word as deactivated instead of deleting it.
         # This is to retain historical data for more accurate highlighting logic
         AlertWord.objects.filter(user_profile=user_profile, word__iexact=delete_word).update(deactivated=True)
+    flush_realm_alert_words(user_profile.realm_id)
     return user_alert_words(user_profile)
