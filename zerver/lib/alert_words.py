@@ -47,7 +47,7 @@ def get_alert_word_automaton(realm: Realm) -> ahocorasick.Automaton:
 
 
 def user_alert_words(user_profile: UserProfile) -> list[str]:
-    return list(AlertWord.objects.filter(user_profile=user_profile,deactivated=False).values_list("word", flat=True))
+    return list(AlertWord.objects.filter(user_profile=user_profile, deactivated=False).values_list("word", flat=True))
 
 
 @transaction.atomic(savepoint=False)
