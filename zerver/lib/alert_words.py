@@ -14,9 +14,9 @@ from zerver.models.alert_words import flush_realm_alert_words
 
 @cache_with_key(lambda realm: realm_alert_words_cache_key(realm.id), timeout=3600 * 24)
 def alert_words_in_realm(realm: Realm) -> dict[int, list[str]]:
-    user_ids_and_words = AlertWord.objects.filter(realm=realm, user_profile__is_active=True).values(
-        "user_profile_id", "word"
-    )
+    user_ids_and_words = AlertWord.objects.filter(
+        realm=realm, user_profile__is_active=True, deactivated=False
+        ).values("user_profile_id", "word")
     user_ids_with_words: dict[int, list[str]] = {}
     for id_and_word in user_ids_and_words:
         user_ids_with_words.setdefault(id_and_word["user_profile_id"], [])
@@ -37,7 +37,7 @@ def get_alert_word_automaton(realm: Realm) -> ahocorasick.Automaton:
             else:
                 alert_word_automaton.add_word(alert_word_lower, (alert_word_lower, {user_id}))
     alert_word_automaton.make_automaton()
-    # If the kind is not AHOCORASICK after calling make_automaton, it means there is no key present
+# If the kind is not AHOCORASICK after calling make_automaton, it means there is no key present
     # and hence we cannot call items on the automaton yet. To avoid it we return None for such cases
     # where there is no alert-words in the realm.
     # https://pyahocorasick.readthedocs.io/en/latest/#make-automaton
@@ -47,20 +47,28 @@ def get_alert_word_automaton(realm: Realm) -> ahocorasick.Automaton:
 
 
 def user_alert_words(user_profile: UserProfile) -> list[str]:
-    return list(AlertWord.objects.filter(user_profile=user_profile,deactivated=False).values_list("word", flat=True))
+    return list(AlertWord.objects.filter(user_profile=user_profile, deactivated=False).values_list("word", flat=True))
 
+def user_alert_words_with_deactivated(user_profile: UserProfile) -> list[AlertWord]:
+    # returns all alert words for a user, including deactivated ones
+    # this is used to check for duplicates when adding new alert words
+    return list(AlertWord.objects.filter(user_profile=user_profile))
 
 @transaction.atomic(savepoint=False)
 def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) -> list[str]:
-    existing_alert_words = AlertWord.objects.filter(user_profile=user_profile)
+    existing_alert_words = user_alert_words_with_deactivated(user_profile)
+    
+    # case-insensitive distinct, new alert words
     existing_words_map = {
         alert_word.word.lower(): alert_word for alert_word in existing_alert_words
     }
-
+    # Keeping the case, use a dictionary to get the set of
     word_dict: dict[str, str] = {}
-
     for word in new_words:
         lower_word = word.lower()
+        # if the word already exists, we just reactivate it(soft delete)
+        # we activate it by setting deactivated to False instead of deleting it
+        # so that we can retain historical data for more accurate highlighting logic
         if lower_word in existing_words_map:
             alert_word = existing_words_map[lower_word]
             if alert_word.deactivated:
@@ -73,9 +81,14 @@ def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) ->
         AlertWord(user_profile=user_profile, word=word, realm=user_profile.realm)
         for word in word_dict.values()
     )
+    
+    # Django bulk_create operations don't flush caches, so we need to do this ourselves.
     flush_realm_alert_words(user_profile.realm_id)
 
-    return user_alert_words(user_profile)
+    return list(
+        AlertWord.objects.filter(user_profile=user_profile, deactivated=False)
+        .values_list("word", flat=True)
+    )
 
 
 
