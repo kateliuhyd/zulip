@@ -37,7 +37,7 @@ def get_alert_word_automaton(realm: Realm) -> ahocorasick.Automaton:
             else:
                 alert_word_automaton.add_word(alert_word_lower, (alert_word_lower, {user_id}))
     alert_word_automaton.make_automaton()
-# If the kind is not AHOCORASICK after calling make_automaton, it means there is no key present
+    # If the kind is not AHOCORASICK after calling make_automaton, it means there is no key present
     # and hence we cannot call items on the automaton yet. To avoid it we return None for such cases
     # where there is no alert-words in the realm.
     # https://pyahocorasick.readthedocs.io/en/latest/#make-automaton
