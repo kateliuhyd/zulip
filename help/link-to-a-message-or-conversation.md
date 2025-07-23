@@ -7,7 +7,7 @@ tools.
 
 ## Link to a channel within Zulip
 
-Channel links are automatically formatted as [#channel name]().
+Channel links are automatically formatted as [#channel name](#link-to-a-channel-within-zulip).
 
 {start_tabs}
 
@@ -35,7 +35,7 @@ You can create a channel link manually by typing `#**channel name**`
 
 ## Link to a topic within Zulip
 
-Topic links are automatically formatted as [#channel > topic]().
+Topic links are automatically formatted as [#channel > topic](#link-to-a-topic-within-zulip).
 
 {start_tabs}
 
@@ -79,18 +79,17 @@ In addition, links to messages, topics, and channels are **permanent**:
   or [channel](/help/move-content-to-another-channel), or if its [topic is
   resolved](/help/resolve-a-topic). Zulip uses the same permanent link syntax
   when [quoting a message](/help/quote-or-forward-a-message).
-
 - [Topic links](#get-a-link-to-a-specific-topic) will still work even when the
   topic is [renamed](/help/rename-a-topic), [moved to another
   channel](/help/move-content-to-another-channel), or
   [resolved](/help/resolve-a-topic).
 
-!!! tip ""
+    !!! tip ""
 
-    When some messages are [moved out of a
-    topic](/help/move-content-to-another-topic) and others are left in place,
-    links to that topic will follow the location of the message whose ID is
-    encoded in the topic URL (usually the first or last message in the topic).
+        When some messages are [moved out of a
+        topic](/help/move-content-to-another-topic) and others are left in place,
+        links to that topic will follow the location of the message whose ID is
+        encoded in the topic URL (usually the first or last message in the topic).
 
 - [Channel links](#get-a-link-to-a-specific-channel) will still work even when a
   channel is [renamed](/help/rename-a-channel) or

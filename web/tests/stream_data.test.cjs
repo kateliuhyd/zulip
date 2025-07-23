@@ -15,6 +15,7 @@ const color_data = zrequire("color_data");
 const peer_data = zrequire("peer_data");
 const people = zrequire("people");
 const sub_store = zrequire("sub_store");
+const message_edit = zrequire("message_edit");
 const stream_data = zrequire("stream_data");
 const hash_util = zrequire("hash_util");
 const {set_current_user, set_realm} = zrequire("state_data");
@@ -53,6 +54,13 @@ const test_user = {
 
 const admin_user_id = 1;
 const moderator_user_id = 2;
+
+const moderator = {
+    email: "moderator@zulip.com",
+    full_name: "Moderator",
+    user_id: moderator_user_id,
+    is_moderator: true,
+};
 // set up user data
 const admins_group = {
     name: "Admins",
@@ -1791,6 +1799,41 @@ test("user_can_set_topics_policy", ({override}) => {
     assert.equal(stream_data.user_can_set_topics_policy(sub), false);
 });
 
+test("user_can_set_delete_message_policy", ({override}) => {
+    const sub = {
+        name: "Denmark",
+        subscribed: true,
+        color: "red",
+        stream_id: 1,
+        can_add_subscribers_group: admins_group.id,
+        can_administer_channel_group: nobody_group.id,
+        can_remove_subscribers_group: admins_group.id,
+    };
+    stream_data.add_sub(sub);
+
+    override(realm, "realm_can_set_delete_message_policy_group", nobody_group.id);
+    // Admins can always change per-channel delete_message policy.
+    initialize_and_override_current_user(admin_user_id, override);
+    override(current_user, "is_admin", true);
+    assert.equal(stream_data.user_can_set_delete_message_policy(sub), true);
+
+    initialize_and_override_current_user(moderator_user_id, override);
+    override(current_user, "is_admin", false);
+    assert.equal(stream_data.user_can_set_delete_message_policy(sub), false);
+
+    // Not allowed as user not in can_administer_channel_group.
+    override(realm, "realm_can_set_delete_message_policy_group", everyone_group.id);
+    assert.equal(stream_data.user_can_set_delete_message_policy(sub), false);
+
+    sub.can_administer_channel_group = moderators_group.id;
+    assert.equal(stream_data.user_can_set_delete_message_policy(sub), true);
+
+    // Only realm_can_set_delete_message_policy_group is checked if sub is not provided.
+    assert.equal(stream_data.user_can_set_delete_message_policy(), true);
+    override(realm, "realm_can_set_delete_message_policy_group", nobody_group.id);
+    assert.equal(stream_data.user_can_set_delete_message_policy(sub), false);
+});
+
 test("options for dropdown widget", () => {
     const denmark = {
         subscribed: true,
@@ -2208,4 +2251,97 @@ run_test("can_archive_stream", ({override}) => {
 
     social.can_administer_channel_group = me_group.id;
     assert.equal(stream_data.can_archive_stream(social), true);
+});
+
+run_test("is_empty_topic_only_channel", ({override}) => {
+    const social = {
+        subscribed: true,
+        color: "red",
+        name: "social",
+        stream_id: 2,
+        topics_policy: "empty_topic_only",
+    };
+    stream_data.add_sub(social);
+    const scotland = {
+        subscribed: true,
+        color: "red",
+        name: "scotland",
+        stream_id: 3,
+        topics_policy: "inherit",
+    };
+    override(realm, "realm_topics_policy", "allow_empty_topic");
+    assert.equal(stream_data.is_empty_topic_only_channel(undefined), false);
+
+    stream_data.add_sub(scotland);
+    override(current_user, "user_id", me.user_id);
+
+    override(current_user, "is_admin", true);
+    assert.equal(stream_data.is_empty_topic_only_channel(social.stream_id), true);
+    assert.equal(stream_data.is_empty_topic_only_channel(scotland.stream_id), false);
+});
+
+run_test("get_deletability", ({override}) => {
+    const social = {
+        subscribed: true,
+        color: "red",
+        name: "social",
+        stream_id: 2,
+        can_delete_any_message_group: moderators_group.id,
+        can_delete_own_message_group: moderators_group.id,
+    };
+    const denmark = {
+        subscribed: true,
+        color: "red",
+        name: "denmark",
+        stream_id: 3,
+        can_delete_any_message_group: nobody_group.id,
+        can_delete_own_message_group: moderators_group.id,
+    };
+    stream_data.add_sub(social);
+    stream_data.add_sub(denmark);
+
+    const message = {
+        locally_echoed: true,
+        type: "stream",
+        stream_id: social.stream_id,
+    };
+    people.add_active_user(moderator);
+    override(realm, "realm_can_delete_any_message_group", nobody_group.id);
+    override(realm, "realm_can_delete_own_message_group", nobody_group.id);
+
+    // Test per-channel delete permission for deleting any message in the channel.
+    message.sender_id = moderator_user_id;
+    initialize_and_override_current_user(moderator_user_id, override);
+    assert.equal(message_edit.get_deletability(message), true);
+
+    message.sender_id = me.user_id;
+    initialize_and_override_current_user(me.user_id, override);
+    assert.equal(message_edit.get_deletability(message), false);
+
+    message.stream_id = denmark.stream_id;
+    assert.equal(message_edit.get_deletability(message), false);
+
+    message.sender_id = moderator_user_id;
+    initialize_and_override_current_user(moderator_user_id, override);
+    assert.equal(message_edit.get_deletability(message), false);
+
+    // Test per-channel delete permissions for deleting own messages.
+    message.stream_id = social.stream_id;
+
+    message.sender_id = moderator_user_id;
+    initialize_and_override_current_user(moderator_user_id, override);
+    assert.equal(message_edit.get_deletability(message), true);
+
+    message.sender_id = me.user_id;
+    initialize_and_override_current_user(me.user_id, override);
+    assert.equal(message_edit.get_deletability(message), false);
+
+    message.stream_id = denmark.stream_id;
+    assert.equal(message_edit.get_deletability(message), false);
+
+    initialize_and_override_current_user(moderator_user_id, override);
+    assert.equal(message_edit.get_deletability(message), false);
+
+    message.sender_id = moderator_user_id;
+    assert.equal(message_edit.get_deletability(message), false);
 });

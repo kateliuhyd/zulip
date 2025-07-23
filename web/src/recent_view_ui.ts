@@ -2,7 +2,7 @@ import $ from "jquery";
 import _ from "lodash";
 import assert from "minimalistic-assert";
 import type * as tippy from "tippy.js";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import * as typeahead from "../shared/src/typeahead.ts";
 import render_introduce_zulip_view_modal from "../templates/introduce_zulip_view_modal.hbs";
@@ -573,7 +573,9 @@ function get_avatars_context(all_senders: number[]): AvatarsContext {
     const displayed_other_senders = extra_sender_ids.slice(-MAX_EXTRA_SENDERS);
     const other_senders_count = Math.max(0, all_senders.length - max_avatars);
     // Collect extra sender fullname for tooltip
-    const displayed_other_names = people.get_display_full_names(displayed_other_senders.reverse());
+    const displayed_other_names = people.get_display_full_names(
+        displayed_other_senders.toReversed(),
+    );
     if (extra_sender_ids.length > MAX_EXTRA_SENDERS) {
         // We display only 10 extra senders in tooltips,
         // and just display remaining number of senders.
@@ -689,7 +691,7 @@ function format_conversation(conversation_data: ConversationData): ConversationC
         // Since the css for displaying senders in reverse order is much simpler,
         // we provide our handlebars with senders in opposite order.
         // Display in most recent sender first order.
-        all_senders = recent_senders.get_topic_recent_senders(stream_id, topic).reverse();
+        all_senders = recent_senders.get_topic_recent_senders(stream_id, topic).toReversed();
 
         stream_context = {
             stream_id,
@@ -751,7 +753,9 @@ function format_conversation(conversation_data: ConversationData): ConversationC
         // display the other recipients on the direct message conversation with different
         // styling, but it's important to not destroy the information of "who's actually
         // talked".
-        all_senders = recent_senders.get_pm_recent_senders(user_ids_string).participants.reverse();
+        all_senders = recent_senders
+            .get_pm_recent_senders(user_ids_string)
+            .participants.toReversed();
 
         dm_context = {
             user_ids_string,
@@ -1820,7 +1824,7 @@ export function change_focused_element($elt: JQuery, input_key: string): boolean
     return false;
 }
 
-const filter_schema = z.array(z.string()).default([]);
+const filter_schema = z._default(z.array(z.string()), []);
 
 function load_filters(): void {
     // load filters from local storage.

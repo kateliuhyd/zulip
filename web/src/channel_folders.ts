@@ -1,4 +1,5 @@
-import type {z} from "zod";
+import assert from "minimalistic-assert";
+import type * as z from "zod/mini";
 
 import {FoldDict} from "./fold_dict.ts";
 import type {StateData, channel_folder_schema} from "./state_data.ts";
@@ -38,4 +39,10 @@ export function get_channel_folders(include_archived = false): ChannelFolder[] {
 
 export function is_valid_folder_id(folder_id: number): boolean {
     return channel_folder_by_id_dict.has(folder_id);
+}
+
+export function get_channel_folder_by_id(folder_id: number): ChannelFolder {
+    const channel_folder = channel_folder_by_id_dict.get(folder_id);
+    assert(channel_folder !== undefined);
+    return channel_folder;
 }

@@ -38,7 +38,6 @@ from zerver.lib.push_notifications import (
     get_message_payload_apns,
     get_message_payload_gcm,
     get_mobile_push_content,
-    hex_to_b64,
     modernize_apns_payload,
     parse_fcm_options,
     send_android_push_notification_to_user,
@@ -83,7 +82,7 @@ from zilencer.auth import (
     generate_registration_transfer_verification_secret,
 )
 from zilencer.models import RemoteZulipServerAuditLog
-from zilencer.views import DevicesToCleanUpDict
+from zilencer.views import DevicesToCleanUpDict, get_deleted_devices
 
 if settings.ZILENCER_ENABLED:
     from zilencer.models import (
@@ -573,13 +572,13 @@ class PushBouncerNotificationTest(BouncerTestCase):
 
         android_token = RemotePushDeviceToken.objects.create(
             kind=RemotePushDeviceToken.FCM,
-            token=hex_to_b64("aaaa"),
+            token="aaaa",
             user_uuid=hamlet.uuid,
             server=server,
         )
         apple_token = RemotePushDeviceToken.objects.create(
             kind=RemotePushDeviceToken.APNS,
-            token=hex_to_b64("bbbb"),
+            token="bbbb",
             user_uuid=hamlet.uuid,
             server=server,
         )
@@ -626,7 +625,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
             android_tokens.append(
                 RemotePushDeviceToken.objects.create(
                     kind=RemotePushDeviceToken.FCM,
-                    token=hex_to_b64(token + i),
+                    token=token + i,
                     user_id=hamlet.id,
                     server=server,
                 )
@@ -638,7 +637,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
             uuid_android_tokens.append(
                 RemotePushDeviceToken.objects.create(
                     kind=RemotePushDeviceToken.FCM,
-                    token=hex_to_b64(token + i),
+                    token=token + i,
                     user_uuid=str(hamlet.uuid),
                     server=server,
                 )
@@ -646,7 +645,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
 
         apple_token = RemotePushDeviceToken.objects.create(
             kind=RemotePushDeviceToken.APNS,
-            token=hex_to_b64(token),
+            token=token,
             user_id=hamlet.id,
             server=server,
         )
@@ -738,7 +737,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
         remote_server = self.server
         RemotePushDeviceToken.objects.create(
             kind=RemotePushDeviceToken.FCM,
-            token=hex_to_b64("aaaaaa"),
+            token="aaaaaa",
             user_id=hamlet.id,
             server=remote_server,
         )
@@ -949,7 +948,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
         hamlet = self.example_user("hamlet")
         RemotePushDeviceToken.objects.create(
             kind=RemotePushDeviceToken.FCM,
-            token=hex_to_b64("aaaaaa"),
+            token="aaaaaa",
             user_id=hamlet.id,
             server=self.server,
         )
@@ -1030,18 +1029,13 @@ class PushBouncerNotificationTest(BouncerTestCase):
         self.assert_length(remote_tokens, 0)
 
     def test_invalid_apns_token(self) -> None:
-        endpoints = [
-            ("/api/v1/remotes/push/register", "apple-token"),
-        ]
-
-        for endpoint, method in endpoints:
-            payload = {
-                "user_id": 10,
-                "token": "xyz uses non-hex characters",
-                "token_kind": PushDeviceToken.APNS,
-            }
-            result = self.uuid_post(self.server_uuid, endpoint, payload)
-            self.assert_json_error(result, "Invalid APNS token")
+        payload = {
+            "user_id": 10,
+            "token": "xyz uses non-hex characters",
+            "token_kind": PushDeviceToken.APNS,
+        }
+        result = self.uuid_post(self.server_uuid, "/api/v1/remotes/push/register", payload)
+        self.assert_json_error(result, "Invalid APNS token")
 
     def test_initialize_push_notifications(self) -> None:
         realm = get_realm("zulip")
@@ -1130,7 +1124,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
         remote_realm.save()
 
         endpoint = "/json/users/me/apns_device_token"
-        token = "apple-tokenaz"
+        token = "c0ffee"
         with self.assertLogs("zilencer.views", level="WARN") as warn_log:
             result = self.client_post(
                 endpoint, {"token": token, "appid": "org.zulip.Zulip"}, subdomain="zulip"
@@ -1163,7 +1157,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
         endpoints: list[tuple[str, str, int, Mapping[str, str]]] = [
             (
                 "/json/users/me/apns_device_token",
-                "apple-tokenaz",
+                "c0fFeE",
                 RemotePushDeviceToken.APNS,
                 {"appid": "org.zulip.Zulip"},
             ),
@@ -1232,8 +1226,7 @@ class PushBouncerNotificationTest(BouncerTestCase):
             self.assert_json_success(result)
             self.assertIn(
                 "INFO:zilencer.views:/api/v1/remotes/push/register: Received request for "
-                f"unknown realm {user.realm.uuid!s}, server {server.id}, "
-                f"user {user.uuid!s}",
+                f"unknown realm {user.realm.uuid!s}, server {server.id}",
                 info_log.output,
             )
 
@@ -2307,7 +2300,7 @@ class TestAddRemoveDeviceTokenAPI(BouncerTestCase):
         self.login_user(user)
 
         endpoints: list[tuple[str, str, Mapping[str, str]]] = [
-            ("/json/users/me/apns_device_token", "apple-tokenaz", {"appid": "org.zulip.Zulip"}),
+            ("/json/users/me/apns_device_token", "c0ffee", {"appid": "org.zulip.Zulip"}),
             ("/json/users/me/android_gcm_reg_id", "android-token", {}),
         ]
 
@@ -2318,7 +2311,7 @@ class TestAddRemoveDeviceTokenAPI(BouncerTestCase):
             result = self.client_post(endpoint, {"token": broken_token, **appid})
             self.assert_json_error(result, "Empty or invalid length token")
 
-            if label == "apple-tokenaz":
+            if "apns" in endpoint:
                 result = self.client_post(
                     endpoint, {"token": "xyz has non-hex characters", **appid}
                 )
@@ -2357,12 +2350,12 @@ class TestAddRemoveDeviceTokenAPI(BouncerTestCase):
         self.login_user(user)
 
         no_bouncer_requests: list[tuple[str, str, Mapping[str, str]]] = [
-            ("/json/users/me/apns_device_token", "apple-tokenaa", {"appid": "org.zulip.Zulip"}),
+            ("/json/users/me/apns_device_token", "c0ffee01", {"appid": "org.zulip.Zulip"}),
             ("/json/users/me/android_gcm_reg_id", "android-token-1", {}),
         ]
 
         bouncer_requests: list[tuple[str, str, Mapping[str, str]]] = [
-            ("/json/users/me/apns_device_token", "apple-tokenbb", {"appid": "org.zulip.Zulip"}),
+            ("/json/users/me/apns_device_token", "c0ffee02", {"appid": "org.zulip.Zulip"}),
             ("/json/users/me/android_gcm_reg_id", "android-token-2", {}),
         ]
 
@@ -2403,13 +2396,13 @@ class TestAddRemoveDeviceTokenAPI(BouncerTestCase):
         # PushDeviceToken will include all the device tokens.
         token_values = list(PushDeviceToken.objects.values_list("token", flat=True))
         self.assertEqual(
-            token_values, ["apple-tokenaa", "android-token-1", "apple-tokenbb", "android-token-2"]
+            token_values, ["c0ffee01", "android-token-1", "c0ffee02", "android-token-2"]
         )
 
         # RemotePushDeviceToken will only include tokens of
         # the devices using push notification bouncer.
         remote_token_values = list(RemotePushDeviceToken.objects.values_list("token", flat=True))
-        self.assertEqual(sorted(remote_token_values), ["android-token-2", "apple-tokenbb"])
+        self.assertEqual(sorted(remote_token_values), ["android-token-2", "c0ffee02"])
 
         # Test removing tokens without using push notification bouncer.
         for endpoint, token, appid in no_bouncer_requests:
@@ -2512,8 +2505,8 @@ class FCMSendTest(PushNotificationTestCase):
             send_android_push_notification_to_user(self.user_profile, data, {})
         self.assert_length(logger.output, 3)
         log_msg1 = f"INFO:zerver.lib.push_notifications:FCM: Sending notification for local user <id:{self.user_profile.id}> to 2 devices"
-        log_msg2 = f"INFO:zerver.lib.push_notifications:FCM: Sent message with ID: {response.responses[0].message_id} to {hex_to_b64(self.fcm_tokens[0])}"
-        log_msg3 = f"INFO:zerver.lib.push_notifications:FCM: Sent message with ID: {response.responses[1].message_id} to {hex_to_b64(self.fcm_tokens[1])}"
+        log_msg2 = f"INFO:zerver.lib.push_notifications:FCM: Sent message with ID: {response.responses[0].message_id} to {self.fcm_tokens[0]}"
+        log_msg3 = f"INFO:zerver.lib.push_notifications:FCM: Sent message with ID: {response.responses[1].message_id} to {self.fcm_tokens[1]}"
 
         self.assertEqual([log_msg1, log_msg2, log_msg3], logger.output)
         mock_warning.assert_not_called()
@@ -2521,14 +2514,13 @@ class FCMSendTest(PushNotificationTestCase):
     def test_not_registered(
         self, mock_fcm_messaging: mock.MagicMock, fcm_app: mock.MagicMock
     ) -> None:
-        token = hex_to_b64("1111")
+        token = "1111"
         response = self.make_fcm_error_response(
             token, firebase_messaging.UnregisteredError("Requested entity was not found.")
         )
         mock_fcm_messaging.send_each.return_value = response
 
-        def get_count(hex_token: str) -> int:
-            token = hex_to_b64(hex_token)
+        def get_count(token: str) -> int:
             return PushDeviceToken.objects.filter(token=token, kind=PushDeviceToken.FCM).count()
 
         self.assertEqual(get_count("1111"), 1)
@@ -2547,7 +2539,7 @@ class FCMSendTest(PushNotificationTestCase):
         self.assertEqual(get_count("1111"), 0)
 
     def test_failure(self, mock_fcm_messaging: mock.MagicMock, fcm_app: mock.MagicMock) -> None:
-        token = hex_to_b64("1111")
+        token = "1111"
         response = self.make_fcm_error_response(token, firebase_exceptions.UnknownError("Failed"))
         mock_fcm_messaging.send_each.return_value = response
 
@@ -3232,3 +3224,159 @@ class TestUserPushIdentityCompat(ZulipTestCase):
 
         # An integer can't be equal to an instance of the class.
         self.assertNotEqual(user_identity_a, 1)
+
+
+class TestDeletedDevices(BouncerTestCase):
+    def test_delete_android(self) -> None:
+        hamlet = self.example_user("hamlet")
+        server = self.server
+
+        # Android tokens are case-sensitive, so this is just 4 different tokens.
+        for token in ["aaaa", "aaAA", "bbbb", "BBBB"]:
+            RemotePushDeviceToken.objects.create(
+                kind=RemotePushDeviceToken.FCM,
+                server=server,
+                user_id=hamlet.id,
+                token=token,
+            )
+
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=[], apple_devices=[]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id),
+                server,
+                android_devices=["aaaa", "aaAA", "bbbb", "BBBB"],
+                apple_devices=[],
+            ),
+        )
+
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=[], apple_devices=[]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id),
+                server,
+                android_devices=["aaAA", "bbbb"],
+                apple_devices=[],
+            ),
+        )
+
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=["more", "other"], apple_devices=[]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id),
+                server,
+                android_devices=["aaAA", "bbbb", "other", "more"],
+                apple_devices=[],
+            ),
+        )
+
+        # Add some tokens which have both user-id and user-UUIDs.
+        for token in ["cccc", "dddd"]:
+            RemotePushDeviceToken.objects.create(
+                kind=RemotePushDeviceToken.FCM,
+                server=server,
+                user_id=hamlet.id,
+                user_uuid=hamlet.uuid,
+                token=token,
+            )
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=["more", "other"], apple_devices=[]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id, user_uuid=str(hamlet.uuid)),
+                server,
+                android_devices=["aaAA", "bbbb", "cccc", "other", "more"],
+                apple_devices=[],
+            ),
+        )
+
+    def test_delete_apple(self) -> None:
+        hamlet = self.example_user("hamlet")
+        server = self.server
+
+        # APNs tokens are case-preserving but case-insensitive -- but
+        # old versions of the server did not know that.  We therefore
+        # must be able to correctly handle getting multiple cases of
+        # the same token, and always responding with the case that the
+        # caller provided.
+        for token in ["aaaa", "bBBb", "CCCC"]:
+            RemotePushDeviceToken.objects.create(
+                kind=RemotePushDeviceToken.APNS,
+                server=server,
+                user_id=hamlet.id,
+                token=token,
+            )
+
+        # Simple case -- remote server and bouncer agree on tokens and
+        # their case.
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=[], apple_devices=[]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id),
+                server,
+                android_devices=[],
+                apple_devices=["aaaa", "bBBb", "CCCC"],
+            ),
+        )
+
+        # Same, but with extra tokens present
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=[], apple_devices=["cafe", "ffff"]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id),
+                server,
+                android_devices=[],
+                apple_devices=["aaaa", "bBBb", "CCCC", "ffff", "cafe"],
+            ),
+        )
+
+        # The remote server has a token in multiple cases, none of
+        # which potentially agree with our case.  It will tell the
+        # remote server to remove all but the first case it
+        # encountered.
+        self.assertEqual(
+            DevicesToCleanUpDict(android_devices=[], apple_devices=["AAaa"]),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id),
+                server,
+                android_devices=[],
+                apple_devices=["AAAA", "AAaa", "BBBB"],
+            ),
+        )
+
+        # Add some tokens which have both user-id and user-UUIDs.
+        for token in ["dddd", "EeeE"]:
+            RemotePushDeviceToken.objects.create(
+                kind=RemotePushDeviceToken.APNS,
+                server=server,
+                user_id=hamlet.id,
+                user_uuid=hamlet.uuid,
+                token=token,
+            )
+        self.assertEqual(
+            DevicesToCleanUpDict(
+                android_devices=[],
+                apple_devices=["AAaa", "EEEE", "more", "other"],
+            ),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id, user_uuid=str(hamlet.uuid)),
+                server,
+                android_devices=[],
+                apple_devices=["AAAA", "AAaa", "BBBB", "DDDD", "eeEE", "EEEE", "other", "more"],
+            ),
+        )
+
+        # It should not be possible to have a token be passed in more
+        # than once with the same case, but in such cases we should
+        # not return it in the to-clean-up list.
+        self.assertEqual(
+            DevicesToCleanUpDict(
+                android_devices=[],
+                apple_devices=["MORE"],
+            ),
+            get_deleted_devices(
+                UserPushIdentityCompat(user_id=hamlet.id, user_uuid=str(hamlet.uuid)),
+                server,
+                android_devices=[],
+                apple_devices=["AAAA", "AAAA", "MORE", "MORE"],
+            ),
+        )

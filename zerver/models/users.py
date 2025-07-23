@@ -922,6 +922,9 @@ class UserProfile(AbstractBaseUser, PermissionsMixin, UserBaseSettings):
     def can_delete_own_message(self) -> bool:
         return self.has_permission("can_delete_own_message_group")
 
+    def can_set_delete_message_policy(self) -> bool:
+        return self.is_realm_admin or self.has_permission("can_set_delete_message_policy_group")
+
     def can_set_topics_policy(self) -> bool:
         return self.is_realm_admin or self.has_permission("can_set_topics_policy_group")
 
@@ -1236,3 +1239,25 @@ def get_bot_dicts_in_realm(realm: "Realm") -> list[dict[str, Any]]:
 
 def is_cross_realm_bot_email(email: str) -> bool:
     return email.lower() in settings.CROSS_REALM_BOT_EMAILS
+
+
+class ExternalAuthID(models.Model):
+    user = models.ForeignKey(UserProfile, on_delete=CASCADE)
+    realm = models.ForeignKey("zerver.Realm", on_delete=CASCADE)
+    date_created = models.DateTimeField(default=timezone_now)
+    # TODO: We might want to add is_active and date_deactivated fields in the future.
+
+    external_auth_method_name = models.TextField(db_index=False)
+    external_auth_id = models.TextField(db_index=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "realm",
+                    "external_auth_method_name",
+                    "external_auth_id",
+                ],
+                name="zerver_externalauthid_uniq",
+            ),
+        ]

@@ -52,8 +52,8 @@ topics](/help/restrict-moving-messages).
 
 !!! tip ""
 
-    You can also click on the **✔** icon in the message recipient bar to
-    mark an unresolved topic as resolved.
+    You can also click on the **mark as resolved** (<i class="zulip-icon zulip-icon-check"></i>)
+    icon in the message recipient bar to mark an unresolved topic as resolved.
 
 {tab|mobile}
 
@@ -82,8 +82,8 @@ accident.
 
 !!! tip ""
 
-    You can also click on the **✔** icon in the message recipient bar to
-    mark a resolved topic as unresolved.
+    You can also click on the **ellipsis** (<i class="zulip-icon zulip-icon-more-vertical"></i>)
+    in the message recipient bar, and select the **Mark as unresolved** option.
 
 {tab|mobile}
 
@@ -147,6 +147,10 @@ accident.
     keyboard shortcut to start searching messages.
 
 {end_tabs}
+
+## Filter by whether topics are resolved
+
+{!filter-resolved-left-sidebar.md!}
 
 ## Details
 

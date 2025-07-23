@@ -37,6 +37,7 @@ from django.shortcuts import render
 from django.urls import reverse
 from django.utils.translation import gettext as _
 from django_auth_ldap.backend import LDAPBackend, _LDAPUser, _LDAPUserGroups, ldap_error
+from django_auth_ldap.config import LDAPSettings
 from lxml.etree import XMLSyntaxError
 from onelogin.saml2 import compat as onelogin_saml2_compat
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
@@ -74,7 +75,7 @@ from zerver.actions.user_groups import (
     bulk_add_members_to_user_groups,
     bulk_remove_members_from_user_groups,
 )
-from zerver.actions.user_settings import do_regenerate_api_key
+from zerver.actions.user_settings import do_change_user_delivery_email, do_regenerate_api_key
 from zerver.actions.users import do_change_user_role, do_deactivate_user
 from zerver.lib.avatar import avatar_url, is_avatar_new
 from zerver.lib.avatar_hash import user_avatar_content_hash
@@ -108,6 +109,7 @@ from zerver.models.realms import (
     supported_auth_backends,
 )
 from zerver.models.users import (
+    ExternalAuthID,
     PasswordTooWeakError,
     get_user_by_delivery_email,
     get_user_profile_by_id,
@@ -687,6 +689,53 @@ class ZulipLDAPConfigurationError(Exception):
 LDAP_USER_ACCOUNT_CONTROL_DISABLED_MASK = 2
 
 
+def ldap_external_auth_id_sync_enabled() -> bool:
+    external_auth_id_attr = settings.AUTH_LDAP_USER_ATTR_MAP.get("unique_account_id")
+    if external_auth_id_attr is None:
+        return False
+
+    if not isinstance(external_auth_id_attr, str):
+        raise AssertionError(
+            "unique_account_id in AUTH_LDAP_USER_ATTR_MAP set to invalid value! must be a string."
+        )
+
+    return True
+
+
+class ZulipLDAPSettings(LDAPSettings):
+    NON_SYNCABLE_ATTRS = [
+        "unique_account_id",
+        "avatar",
+        "userAccountControl",
+        "deactivated",
+        "org_membership",
+    ]
+
+    def __init__(
+        self, prefix: str = "AUTH_LDAP_", defaults: dict[object, object] | None = None
+    ) -> None:
+        """
+        django-auth-ldap populate_user() codepath iterates through USER_ATTR_MAP dict, and calls
+        setattr(user, key, value) for each key, value pair. The challenge here is that Zulip adds some custom
+        mappings in AUTH_LDAP_USER_ATTR_MAP - for which the keys are special keywords (e.g. "unique_account_id")
+        with a meaning understood by Zulip's code for handling them - and aren't actual UserProfile attributes
+        that can be set in a valid way.
+
+        To avoid ending up with strange UserProfile objects, which have attributes set on them which shouldn't
+        exist at all, we have to patch this settings class - to drop such special keywords from USER_ATTR_MAP
+        for the purposes of django-auth-ldap's internal code.
+        """
+        if defaults is None:  # nocoverage
+            defaults = dict()
+
+        super().__init__(prefix, defaults)
+        self.USER_ATTR_MAP: dict[object, object] = {
+            key: value
+            for key, value in self.USER_ATTR_MAP.items()
+            if key not in self.NON_SYNCABLE_ATTRS
+        }
+
+
 class ZulipLDAPAuthBackendBase(ZulipAuthMixin, LDAPBackend):
     """Common code between LDAP authentication (ZulipLDAPAuthBackend) and
     using LDAP just to sync user data (ZulipLDAPUserPopulator).
@@ -707,6 +756,16 @@ class ZulipLDAPAuthBackendBase(ZulipAuthMixin, LDAPBackend):
             init_fakeldap()
 
         check_ldap_config()
+
+    @property
+    def settings(self) -> ZulipLDAPSettings:
+        # See ZulipLDAPSettings for explanation of why we need to patch this
+        # to substitute our overridden LDAPSettings class.
+        self._settings: ZulipLDAPSettings | None
+        if self._settings is None:
+            self._settings = ZulipLDAPSettings(self.settings_prefix, self.default_settings)
+
+        return self._settings
 
     # Disable django-auth-ldap's permissions functions -- we don't use
     # the standard Django user/group permissions system because they
@@ -1028,7 +1087,76 @@ class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
 
         return user
 
-    def get_or_build_user(self, username: str, ldap_user: _LDAPUser) -> tuple[UserProfile, bool]:
+    def get_and_sync_user_profile_by_external_auth_id(
+        self, external_auth_id: str, email: str, return_data: dict[str, Any]
+    ) -> UserProfile | None:
+        # If we're using External Auth ID based auth, then the lookup by
+        # external_auth_id takes precedence over lookup by email.
+        try:
+            user_profile: UserProfile | None = ExternalAuthID.objects.get(
+                external_auth_method_name=self.name,
+                external_auth_id=external_auth_id,
+                realm=self._realm,
+            ).user
+        except ExternalAuthID.DoesNotExist:
+            user_profile = common_get_active_user(email, self._realm, return_data)
+            if user_profile is not None:
+                # If we found an account with the matching email, but no ExternalAuthID, then this account hasn't
+                # yet had its external_auth_id stored - we need to do this now.
+                ExternalAuthID.objects.create(
+                    external_auth_method_name=self.name,
+                    external_auth_id=external_auth_id,
+                    realm=self._realm,
+                    user=user_profile,
+                )
+            return user_profile
+
+        assert user_profile is not None
+        # We found a user with the matching external_auth_id. Now we need to do a seemingly redundant
+        # re-fetching via common_get_active_user - as that's the core function for securely fetching
+        # a user for login, in authentication contexts. It's responsible for the relevant security
+        # checks (such as the account being active) - we don't attempt to duplicate these checks
+        # here independently.
+        user_profile = common_get_active_user(user_profile.delivery_email, self._realm, return_data)
+        if user_profile is None:
+            return None
+
+        # We need to ensure the email address of the Zulip account remains synced with what's in the ldap
+        # directory. That's the point of external_auth_id-based authentication.
+        if user_profile.delivery_email != email:
+            # We intentionally do a case-sensitive comparison, despite emails in Zulip being
+            # case-insensitive in auth contexts. We want to support the case of sync tweaking just
+            # capitalization of the email address.
+            self.logger.info(
+                "User %s, logged in via ExternalAuthId %s, has mismatched email. Syncing: %s => %s",
+                user_profile.id,
+                external_auth_id,
+                user_profile.delivery_email,
+                email,
+            )
+            if (
+                UserProfile.objects.filter(realm=self._realm, delivery_email__iexact=email)
+                # The EXISTS query has a somewhat strange shape because we need
+                # to again consider the edge case where we might be simply
+                # updating capitalization of the email for the user. In such a
+                # situation, a "conflict" on (realm, delivery_email__iexact) is
+                # not an actual conflict.
+                .exclude(id=user_profile.id)
+                .exists()
+            ):
+                self.logger.warning(
+                    "Can't sync email for user %s: another user exists with target email %s",
+                    user_profile.id,
+                    email,
+                )
+            else:
+                do_change_user_delivery_email(user_profile, email, acting_user=None)
+
+        return user_profile
+
+    def get_or_build_user(
+        self, username: str, ldap_user: "ZulipLDAPUser"
+    ) -> tuple[UserProfile, bool]:
         """The main function of our authentication backend extension of
         django-auth-ldap.  When this is called (from `authenticate`),
         django-auth-ldap will already have verified that the provided
@@ -1045,7 +1173,11 @@ class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
         """
         return_data: dict[str, Any] = {}
 
-        username = self.user_email_from_ldapuser(username, ldap_user)
+        email = self.user_email_from_ldapuser(username, ldap_user)
+
+        external_auth_id: str | None = None
+        if ldap_external_auth_id_sync_enabled():
+            external_auth_id = ldap_user.get_external_auth_id()
 
         if self.is_account_realm_access_forbidden(ldap_user, self._realm):
             raise ZulipLDAPError("User not allowed to access realm")
@@ -1057,7 +1189,13 @@ class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
                 return_data["inactive_user"] = True
                 raise ZulipLDAPError("User has been deactivated")
 
-        user_profile = common_get_active_user(username, self._realm, return_data)
+        if ldap_external_auth_id_sync_enabled() and external_auth_id:
+            user_profile = self.get_and_sync_user_profile_by_external_auth_id(
+                external_auth_id, email, return_data
+            )
+        else:
+            user_profile = common_get_active_user(email, self._realm, return_data)
+
         if user_profile is not None:
             # An existing user, successfully authed; return it.
             return user_profile, False
@@ -1078,9 +1216,9 @@ class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
             raise ZulipLDAPError("Realm has been deactivated")
 
         try:
-            validate_email(username)
+            validate_email(email)
         except ValidationError:
-            error_message = f"{username} is not a valid email address."
+            error_message = f"{email} is not a valid email address."
             # This indicates a misconfiguration of ldap settings
             # or a malformed email value in the ldap directory,
             # so we should log a warning about this before failing.
@@ -1092,9 +1230,9 @@ class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
         # we also call validate_email_not_already_in_realm just for consistency,
         # even though its checks were already done above.
         try:
-            email_allowed_for_realm(username, self._realm)
+            email_allowed_for_realm(email, self._realm)
             validate_email_not_already_in_realm(
-                self._realm, username, allow_inactive_mirror_dummies=True
+                self._realm, email, allow_inactive_mirror_dummies=True
             )
         except DomainNotAllowedForRealmError:
             raise ZulipLDAPError("This email domain isn't allowed in this organization.")
@@ -1128,8 +1266,11 @@ class ZulipLDAPAuthBackend(ZulipLDAPAuthBackendBase):
             opts["role"] = UserProfile.ROLE_REALM_OWNER
             opts["default_stream_groups"] = []
 
+        if ldap_external_auth_id_sync_enabled():
+            opts["external_auth_id_dict"] = {self.name: external_auth_id}
+
         user_profile = do_create_user(
-            username,
+            email,
             None,
             self._realm,
             full_name,
@@ -1158,7 +1299,33 @@ class ZulipLDAPUser(_LDAPUser):
 
         super().__init__(*args, **kwargs)
 
-    @transaction.atomic(savepoint=False)
+    def get_external_auth_id(self) -> str:
+        """
+        The user's ldap DN is usually the best choice for the external_auth_id in LDAP
+        authentication, as DNs are unique within an ldap directory.
+        However, we also support configuring a custom attribute to use instead.
+        """
+        attr_name = settings.AUTH_LDAP_USER_ATTR_MAP.get("unique_account_id")
+        if attr_name is None:
+            raise AssertionError("unique_account_id is not configured in AUTH_LDAP_USER_ATTR_MAP")
+
+        if attr_name.lower() == "dn":
+            return self.dn
+
+        external_auth_id = self.attrs[attr_name][0]
+        assert isinstance(external_auth_id, str)
+        return external_auth_id
+
+    # We intentionally want to create a transaction savepoint here. This only
+    # runs when syncing a user with LDAP during login or sync_ldap_user_data job
+    # and the performance cost should be negligible.
+    # A savepoint is needed because sync_ldap_user_data runs inside a large transaction
+    # syncing all users. LDAP sync exceptions can propagate through here, to be caught
+    # and logged up the callstack.
+    # When that occurs, we actually want to roll back this subtransaction, while allowing
+    # sync_ldap_user_data to go on to sync other users, without breaking its outermost
+    # transactions - which savepoint=False would do.
+    @transaction.atomic(savepoint=True)  # intentional use of savepoint=True
     def _get_or_create_user(self, force_populate: bool = False) -> UserProfile:
         # This function is responsible for the core logic of syncing
         # a user's data with ldap - run in both populate_user codepath
@@ -1643,6 +1810,42 @@ def redirect_deactivated_user_to_login(realm: Realm, email: str) -> HttpResponse
         "login_page", kwargs={"template_name": "zerver/login.html"}, query={"is_deactivated": email}
     )
     return HttpResponseRedirect(redirect_url)
+
+
+@transaction.atomic(savepoint=False)
+def sync_groups_for_prereg_user(
+    prereg_user: PreregistrationUser, group_memberships_sync_map: dict[str, bool]
+) -> None:
+    assert prereg_user.realm is not None
+    realm = prereg_user.realm
+
+    group_names_to_ensure_member = [
+        group_name for group_name, is_member in group_memberships_sync_map.items() if is_member
+    ]
+    group_names_to_ensure_not_member = [
+        group_name for group_name, is_member in group_memberships_sync_map.items() if not is_member
+    ]
+
+    groups_to_ensure_member = list(
+        NamedUserGroup.objects.filter(realm=realm, name__in=group_names_to_ensure_member)
+    )
+    groups_to_ensure_not_member = list(
+        NamedUserGroup.objects.filter(realm=realm, name__in=group_names_to_ensure_not_member)
+    )
+
+    prereg_user.groups.add(*groups_to_ensure_member)
+    prereg_user.groups.remove(*groups_to_ensure_not_member)
+
+    final_group_names = set(prereg_user.groups.all().values_list("name", flat=True))
+
+    stringified_dict = json.dumps(group_memberships_sync_map, sort_keys=True)
+    logging.info(
+        "Synced user groups for PreregistrationUser %s in %s: %s. Final groups set: %s",
+        prereg_user.id,
+        realm.id,
+        stringified_dict,
+        final_group_names,
+    )
 
 
 def sync_groups(

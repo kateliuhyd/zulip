@@ -8,7 +8,7 @@ const $ = require("./lib/zjquery.cjs");
 const {page_params} = require("./lib/zpage_params.cjs");
 
 const people = zrequire("people");
-const {set_current_user} = zrequire("state_data");
+const {set_current_user, set_realm} = zrequire("state_data");
 
 set_global("document", "document-stub");
 
@@ -56,6 +56,11 @@ const user_settings = {
 };
 initialize_user_settings({user_settings});
 stream_list_sort.set_filter_out_inactives();
+
+const realm = {
+    realm_topics_policy: "allow_empty_topic",
+};
+set_realm(realm);
 
 const me = {
     email: "me@example.com",
@@ -338,6 +343,7 @@ const testSub = {
     subscribed: true,
     is_recently_active: true,
     can_send_message_group: everyone_group.id,
+    is_muted: true,
 };
 
 const announceSub = {
@@ -391,19 +397,6 @@ function elem($obj) {
 test_ui("zoom_in_and_zoom_out", ({mock_template}) => {
     topic_list.setup_topic_search_typeahead = noop;
 
-    const $label1 = $.create("label1 stub");
-    const $label2 = $.create("label2 stub");
-
-    $label1.show();
-    $label2.show();
-
-    assert.ok($label1.visible());
-    assert.ok($label2.visible());
-
-    $.create(".stream-filters-label", {
-        children: [elem($label1), elem($label2)],
-    });
-
     const $splitter = $.create("<active-subheader-stub>");
 
     $splitter.show();
@@ -446,17 +439,15 @@ test_ui("zoom_in_and_zoom_out", ({mock_template}) => {
     });
     stream_list.zoom_in_topics({stream_id: 42});
 
-    assert.ok(!$label1.visible());
-    assert.ok(!$label2.visible());
     assert.ok(!$splitter.visible());
-    assert.ok($stream_li1.visible());
-    assert.ok(!$stream_li2.visible());
+    assert.ok(!$stream_li1.hasClass("hide"));
+    assert.ok($stream_li2.hasClass("hide"));
     assert.ok($("#streams_list").hasClass("zoom-in"));
     assert.ok(filter_topics_appended);
 
-    $("#stream_filters li.narrow-filter").show = () => {
-        $stream_li1.show();
-        $stream_li2.show();
+    $("#stream_filters li.narrow-filter").toggleClass = (classname, value) => {
+        $stream_li1.toggleClass(classname, value);
+        $stream_li2.toggleClass(classname, value);
     };
 
     $stream_li1.length = 1;
@@ -465,11 +456,9 @@ test_ui("zoom_in_and_zoom_out", ({mock_template}) => {
     };
     stream_list.zoom_out_topics({$stream_li: $stream_li1});
 
-    assert.ok($label1.visible());
-    assert.ok($label2.visible());
     assert.ok($splitter.visible());
-    assert.ok($stream_li1.visible());
-    assert.ok($stream_li2.visible());
+    assert.ok(!$stream_li1.hasClass("hide"));
+    assert.ok(!$stream_li2.hasClass("hide"));
     assert.ok($("#streams_list").hasClass("zoom-out"));
     assert.ok(!filter_topics_appended);
 });
@@ -521,14 +510,14 @@ test_ui("narrowing", ({mock_template}) => {
 });
 
 test_ui("focusout_user_filter", () => {
-    stream_list.set_event_handlers({narrow_on_stream_click() {}});
+    stream_list.set_event_handlers({show_channel_feed() {}});
     const e = {};
     const click_handler = $(".stream-list-filter").get_on_handler("focusout");
     click_handler(e);
 });
 
 test_ui("focus_user_filter", () => {
-    stream_list.set_event_handlers({narrow_on_stream_click() {}});
+    stream_list.set_event_handlers({show_channel_feed() {}});
 
     initialize_stream_data();
     stream_list.build_stream_list();
@@ -728,8 +717,8 @@ test_ui("rename_stream", ({mock_template, override}) => {
             is_web_public: undefined,
             color: payload.color,
             pin_to_top: true,
-            hide_unread_count: true,
             can_post_messages: true,
+            is_empty_topic_only_channel: false,
         });
         return {to_$: () => $li_stub};
     });
