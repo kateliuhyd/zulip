@@ -5,6 +5,7 @@ from zerver.lib.alert_words import alert_words_in_realm, user_alert_words
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import most_recent_message, most_recent_usermessage
 from zerver.models import AlertWord, UserProfile
+from zerver.models import AlertWord
 
 
 class AlertWordTests(ZulipTestCase):
@@ -156,17 +157,15 @@ class AlertWordTests(ZulipTestCase):
 
         self.client_post(
             "/json/users/me/alert_words",
-            {"alert_words": orjson.dumps(["one", "two", "three"]).decode()},
+            {"alert_words": orjson.dumps(["one", "two", "three"]).decode()}
         )
 
         result = self.client_delete(
             "/json/users/me/alert_words",
-            {"alert_words": orjson.dumps(["one"]).decode()},
+            {"alert_words": orjson.dumps(["one"]).decode()}
         )
         response_dict = self.assert_json_success(result)
         self.assertEqual(set(response_dict["alert_words"]), {"two", "three"})
-
-        from zerver.models import AlertWord
 
         row = AlertWord.objects.get(user_profile=user, word__iexact="one")
         self.assertTrue(row.deactivated)
