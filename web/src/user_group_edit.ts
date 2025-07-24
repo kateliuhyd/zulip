@@ -2,7 +2,7 @@ import $ from "jquery";
 import _ from "lodash";
 import assert from "minimalistic-assert";
 import type * as tippy from "tippy.js";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import render_confirm_delete_user from "../templates/confirm_dialog/confirm_delete_user.hbs";
 import render_confirm_join_group_direct_member from "../templates/confirm_dialog/confirm_join_group_direct_member.hbs";
@@ -655,7 +655,7 @@ function populate_data_for_removing_realm_permissions(
 
     const data: Record<string, string> = {};
     for (const setting_name of changed_setting_names) {
-        const current_value = realm[realm_schema.keyof().parse("realm_" + setting_name)];
+        const current_value = realm[z.keyof(realm_schema).parse("realm_" + setting_name)];
         data[setting_name] = get_request_data_for_removing_group_permission(
             group_setting_value_schema.parse(current_value),
             group.id,
@@ -677,7 +677,8 @@ function populate_data_for_removing_stream_permissions(
 
     const data: Record<string, string> = {};
     for (const setting_name of changed_setting_names) {
-        const current_value = sub[sub_store.stream_subscription_schema.keyof().parse(setting_name)];
+        const current_value =
+            sub[z.keyof(sub_store.stream_subscription_schema).parse(setting_name)];
         data[setting_name] = get_request_data_for_removing_group_permission(
             group_setting_value_schema.parse(current_value),
             group.id,
@@ -699,7 +700,8 @@ function populate_data_for_removing_user_group_permissions(
 
     const data: Record<string, string> = {};
     for (const setting_name of changed_setting_names) {
-        const current_value = user_group[user_groups.user_group_schema.keyof().parse(setting_name)];
+        const current_value =
+            user_group[z.keyof(user_groups.user_group_schema).parse(setting_name)];
         data[setting_name] = get_request_data_for_removing_group_permission(
             group_setting_value_schema.parse(current_value),
             group.id,
@@ -1681,7 +1683,7 @@ export function update_empty_left_panel_message(): void {
         get_active_data().$tabs.first().attr("data-tab-key") === "your-groups";
 
     let current_group_filter =
-        z.string().optional().parse(filters_dropdown_widget.value()) ??
+        z.optional(z.string()).parse(filters_dropdown_widget.value()) ??
         FILTERS.ACTIVE_AND_DEACTIVATED_GROUPS;
 
     // When the dropdown menu is hidden.
@@ -2033,11 +2035,40 @@ export function initialize(): void {
                             parsed.success &&
                             parsed.data.code === "CANNOT_DEACTIVATE_GROUP_IN_USE"
                         ) {
+                            const subgroup_objections = parsed.data.objections.filter(
+                                (objection) => objection.type === "subgroup",
+                            );
+                            let group_used_for_permissions = true;
+                            let supergroups;
+                            if (subgroup_objections.length === parsed.data.objections.length) {
+                                // If the user group is only used as subgroups and not in
+                                // any of the permission, then we show a different error
+                                // message.
+                                const supergroup_ids = z
+                                    .array(z.number())
+                                    .parse(subgroup_objections[0]!.supergroup_ids);
+                                supergroups = supergroup_ids.map((group_id) => {
+                                    const group = user_groups.get_user_group_from_id(group_id);
+                                    const group_name = user_groups.get_display_group_name(
+                                        group.name,
+                                    );
+                                    return {
+                                        group_id,
+                                        group_name,
+                                        settings_url: hash_util.group_edit_url(group, "members"),
+                                    };
+                                });
+                                group_used_for_permissions = false;
+                            }
                             $("#deactivation-confirm-modal .dialog_submit_button").prop(
                                 "disabled",
                                 true,
                             );
-                            const rendered_error_banner = render_cannot_deactivate_group_banner();
+                            const rendered_error_banner = render_cannot_deactivate_group_banner({
+                                group_used_for_permissions,
+                                supergroups,
+                            });
+
                             $("#dialog_error")
                                 .html(rendered_error_banner)
                                 .addClass("alert-error")

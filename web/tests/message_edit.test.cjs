@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 
 const {mock_esm, zrequire} = require("./lib/namespace.cjs");
 const {run_test} = require("./lib/test.cjs");
+const {page_params} = require("./lib/zpage_params.cjs");
 
 const message_edit = zrequire("message_edit");
 const people = zrequire("people");
@@ -98,6 +99,7 @@ run_test("is_topic_editable", ({override}) => {
     override(stream_data, "is_stream_archived", () => false);
     override(stream_data, "user_can_move_messages_within_channel", () => true);
     override(stream_data, "get_sub_by_id", () => ({}));
+    override(stream_data, "is_empty_topic_only_channel", () => false);
     override(current_user, "is_moderator", true);
 
     assert.equal(message_edit.is_topic_editable(message), false);
@@ -213,6 +215,8 @@ run_test("get_deletability", ({override}) => {
         locally_echoed: true,
         sender_id: 1,
     };
+
+    page_params.is_spectator = false;
 
     // User can delete any message
     assert.equal(message_edit.get_deletability(message), true);

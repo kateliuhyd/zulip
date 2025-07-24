@@ -49,6 +49,7 @@ from zerver.lib.narrow_predicate import check_narrow_for_events
 from zerver.lib.navigation_views import get_navigation_views_for_user
 from zerver.lib.onboarding_steps import get_next_onboarding_steps
 from zerver.lib.presence import get_presence_for_user, get_presences_for_realm
+from zerver.lib.push_notifications import get_push_devices
 from zerver.lib.realm_icon import realm_icon_url
 from zerver.lib.realm_logo import get_realm_logo_source, get_realm_logo_url
 from zerver.lib.scheduled_messages import (
@@ -918,6 +919,9 @@ def fetch_initial_state_data(
         # abuse.
         state["giphy_api_key"] = settings.GIPHY_API_KEY if settings.GIPHY_API_KEY else ""
 
+    if want("push_device"):
+        state["push_devices"] = {} if user_profile is None else get_push_devices(user_profile)
+
     if user_profile is None:
         # To ensure we have the correct user state set.
         assert state["is_admin"] is False
@@ -1264,9 +1268,12 @@ def apply_event(
                             state["never_subscribed"],
                         ]:
                             for sub in sub_dict:
-                                sub["subscribers"] = [
+                                subscriber_key = (
+                                    "subscribers" if "subscribers" in sub else "partial_subscribers"
+                                )
+                                sub[subscriber_key] = [
                                     user_id
-                                    for user_id in sub["subscribers"]
+                                    for user_id in sub[subscriber_key]
                                     if user_id != person_user_id
                                 ]
 
@@ -1309,8 +1316,11 @@ def apply_event(
                     state["never_subscribed"],
                 ]:
                     for sub in sub_dict:
-                        sub["subscribers"] = [
-                            user_id for user_id in sub["subscribers"] if user_id != person_user_id
+                        subscriber_key = (
+                            "subscribers" if "subscribers" in sub else "partial_subscribers"
+                        )
+                        sub[subscriber_key] = [
+                            user_id for user_id in sub[subscriber_key] if user_id != person_user_id
                         ]
         else:
             raise AssertionError("Unexpected event type {type}/{op}".format(**event))
@@ -1614,9 +1624,12 @@ def apply_event(
             # add the new subscriptions
             for sub in event["subscriptions"]:
                 if sub["stream_id"] not in existing_stream_ids:
-                    if "subscribers" in sub and not include_subscribers:
+                    subscriber_key = (
+                        "subscribers" if "subscribers" in sub else "partial_subscribers"
+                    )
+                    if subscriber_key in sub and not include_subscribers:
                         sub = copy.deepcopy(sub)
-                        del sub["subscribers"]
+                        del sub[subscriber_key]
                     state["subscriptions"].append(sub)
 
             # remove them from unsubscribed if they had been there
@@ -1635,7 +1648,10 @@ def apply_event(
             # Remove our user from the subscribers of the removed subscriptions.
             if include_subscribers:
                 for sub in removed_subs:
-                    sub["subscribers"].remove(user_profile.id)
+                    subscriber_key = (
+                        "subscribers" if "subscribers" in sub else "partial_subscribers"
+                    )
+                    sub[subscriber_key].remove(user_profile.id)
 
             state["unsubscribed"] += removed_subs
 
@@ -1662,8 +1678,11 @@ def apply_event(
                 ]:
                     for sub in sub_dict:
                         if sub["stream_id"] in stream_ids:
-                            subscribers = set(sub["subscribers"]) | user_ids
-                            sub["subscribers"] = sorted(subscribers)
+                            subscriber_key = (
+                                "subscribers" if "subscribers" in sub else "partial_subscribers"
+                            )
+                            subscribers = set(sub[subscriber_key]) | user_ids
+                            sub[subscriber_key] = sorted(subscribers)
         elif event["op"] == "peer_remove":
             # Note: We don't update subscriber_count here, as with peer_add.
             if include_subscribers:
@@ -1677,8 +1696,11 @@ def apply_event(
                 ]:
                     for sub in sub_dict:
                         if sub["stream_id"] in stream_ids:
-                            subscribers = set(sub["subscribers"]) - user_ids
-                            sub["subscribers"] = sorted(subscribers)
+                            subscriber_key = (
+                                "subscribers" if "subscribers" in sub else "partial_subscribers"
+                            )
+                            subscribers = set(sub[subscriber_key]) - user_ids
+                            sub[subscriber_key] = sorted(subscribers)
         else:
             raise AssertionError("Unexpected event type {type}/{op}".format(**event))
     elif event["type"] == "presence":
@@ -1953,6 +1975,9 @@ def apply_event(
     elif event["type"] == "restart":
         # The Tornado process restarted.  This has no effect; we ignore it.
         pass
+    elif event["type"] == "push_device":
+        state["push_devices"][event["push_account_id"]]["status"] = event["status"]
+        state["push_devices"][event["push_account_id"]]["error_code"] = event.get("error_code")
     else:
         raise AssertionError("Unexpected event type {}".format(event["type"]))
 

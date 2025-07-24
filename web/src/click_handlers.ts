@@ -3,7 +3,7 @@
 import $ from "jquery";
 import assert from "minimalistic-assert";
 import * as tippy from "tippy.js";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import render_buddy_list_tooltip_content from "../templates/buddy_list_tooltip_content.hbs";
 
@@ -660,20 +660,6 @@ export function initialize(): void {
         });
     });
 
-    // Left sidebar channel rows
-    $("body").on("click", ".channel-new-topic-button", function (this: HTMLElement, e) {
-        e.stopPropagation();
-        e.preventDefault();
-        const stream_id = Number.parseInt(this.dataset.streamId!, 10);
-        compose_actions.start({
-            message_type: "stream",
-            stream_id,
-            topic: "",
-            trigger: "clear topic button",
-            keep_composebox_empty: true,
-        });
-    });
-
     // Recent conversations direct messages (Not displayed on small widths)
     $("body").on(
         "mouseenter",
@@ -838,7 +824,11 @@ export function initialize(): void {
 
     // LEFT SIDEBAR
 
-    $("body").on("click", "#clear_search_topic_button", topic_list.clear_topic_search);
+    $("body").on(
+        "click",
+        ".filter-topics .input-close-filter-button",
+        topic_list.clear_topic_search,
+    );
 
     $(".streams_filter_icon").on("click", (e) => {
         e.stopPropagation();

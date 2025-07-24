@@ -122,13 +122,14 @@
               setting_name="can_send_message_group"
               label=group_setting_labels.can_send_message_group
               prefix=prefix
-              help_link="/help/stream-sending-policy" }}
+              help_link="/help/channel-posting-policy" }}
 
             <div class="input-group">
                 <label for="{{prefix}}topics_policy" class="settings-field-label">{{> stream_topics_policy_label .}}</label>
                 <select name="stream-topics-policy-setting" id="{{prefix}}topics_policy" class="prop-element settings_select bootstrap-focus-style" data-setting-widget-type="string">
                     {{> ../settings/dropdown_options_widget option_values=stream_topics_policy_values}}
                 </select>
+                {{> topics_already_exist_error .}}
             </div>
         </div>
 
@@ -153,6 +154,16 @@
             {{> ../settings/group_setting_value_pill_input
               setting_name="can_resolve_topics_group"
               label=group_setting_labels.can_resolve_topics_group
+              prefix=prefix }}
+
+            {{> ../settings/group_setting_value_pill_input
+              setting_name="can_delete_any_message_group"
+              label=group_setting_labels.can_delete_any_message_group
+              prefix=prefix }}
+
+            {{> ../settings/group_setting_value_pill_input
+              setting_name="can_delete_own_message_group"
+              label=group_setting_labels.can_delete_own_message_group
               prefix=prefix }}
         </div>
 
@@ -184,7 +195,7 @@
                           class="stream_message_retention_setting prop-element settings_select bootstrap-focus-style"
                           id="{{prefix}}message_retention_days"
                           data-setting-widget-type="message-retention-setting">
-                            <option value="realm_default">{{t "Use organization level settings {org_level_message_retention_setting}" }}</option>
+                            <option value="realm_default">{{t "Organization default {org_level_message_retention_setting}" }}</option>
                             <option value="unlimited">{{t 'Retain forever' }}</option>
                             <option value="custom_period">{{t 'Custom' }}</option>
                         </select>

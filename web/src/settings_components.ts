@@ -2,7 +2,7 @@ import $ from "jquery";
 import _ from "lodash";
 import assert from "minimalistic-assert";
 import * as tippy from "tippy.js";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import render_compose_banner from "../templates/compose_banner/compose_banner.hbs";
 
@@ -13,7 +13,11 @@ import * as compose_banner from "./compose_banner.ts";
 import type {DropdownWidget} from "./dropdown_widget.ts";
 import * as dropdown_widget from "./dropdown_widget.ts";
 import * as group_permission_settings from "./group_permission_settings.ts";
-import type {AssignedGroupPermission, GroupGroupSettingName} from "./group_permission_settings.ts";
+import type {
+    AssignedGroupPermission,
+    GroupGroupSettingName,
+    RealmGroupSettingNameSupportingAnonymousGroups,
+} from "./group_permission_settings.ts";
 import * as group_setting_pill from "./group_setting_pill.ts";
 import {$t} from "./i18n.ts";
 import {page_params} from "./page_params.ts";
@@ -29,6 +33,7 @@ import type {CustomProfileField, GroupSettingValue} from "./state_data.ts";
 import {current_user, realm, realm_schema} from "./state_data.ts";
 import * as stream_data from "./stream_data.ts";
 import * as stream_settings_containers from "./stream_settings_containers.ts";
+import * as stream_topic_history from "./stream_topic_history.ts";
 import {
     type StreamPermissionGroupSetting,
     stream_permission_group_settings_schema,
@@ -110,14 +115,14 @@ export function get_realm_time_limits_in_minutes(property: MessageTimeLimitSetti
 
 type RealmSetting = typeof realm;
 export const realm_setting_property_schema = z.union([
-    realm_schema.keyof(),
+    z.keyof(realm_schema),
     z.literal("realm_org_join_restrictions"),
 ]);
 type RealmSettingProperty = z.infer<typeof realm_setting_property_schema>;
 
 type RealmUserSettingDefaultType = typeof realm_user_settings_defaults;
 export const realm_user_settings_default_properties_schema = z.union([
-    realm_default_settings_schema.keyof(),
+    z.keyof(realm_default_settings_schema),
     z.literal("email_notification_batching_period_edit_minutes"),
 ]);
 type RealmUserSettingDefaultProperties = z.infer<
@@ -125,7 +130,7 @@ type RealmUserSettingDefaultProperties = z.infer<
 >;
 
 export const stream_settings_property_schema = z.union([
-    stream_subscription_schema.keyof(),
+    z.keyof(stream_subscription_schema),
     z.enum(["stream_privacy", "is_default_stream"]),
 ]);
 type StreamSettingProperty = z.infer<typeof stream_settings_property_schema>;
@@ -240,7 +245,7 @@ export function get_subsection_property_elements($subsection: JQuery): HTMLEleme
     return [...$subsection.find(".prop-element")];
 }
 
-export const simple_dropdown_realm_settings_schema = realm_schema.pick({
+export const simple_dropdown_realm_settings_schema = z.pick(realm_schema, {
     realm_org_type: true,
     realm_message_edit_history_visibility_policy: true,
     realm_topics_policy: true,
@@ -391,7 +396,10 @@ function get_message_retention_setting_value(
     return util.check_time_input(custom_input_val);
 }
 
-export const select_field_data_schema = z.record(z.object({text: z.string(), order: z.string()}));
+export const select_field_data_schema = z.record(
+    z.string(),
+    z.object({text: z.string(), order: z.string()}),
+);
 export type SelectFieldData = z.output<typeof select_field_data_schema>;
 
 function read_select_field_data_from_form(
@@ -855,6 +863,7 @@ export function check_realm_settings_property_changed(elem: HTMLElement): boolea
         case "realm_can_move_messages_between_channels_group":
         case "realm_can_move_messages_between_topics_group":
         case "realm_can_resolve_topics_group":
+        case "realm_can_set_delete_message_policy_group":
         case "realm_can_set_topics_policy_group":
         case "realm_can_summarize_topics_group":
         case "realm_create_multiuse_invite_group":
@@ -1118,6 +1127,7 @@ export function populate_data_for_realm_settings_request(
                     "can_move_messages_between_channels_group",
                     "can_move_messages_between_topics_group",
                     "can_resolve_topics_group",
+                    "can_set_delete_message_policy_group",
                     "can_set_topics_policy_group",
                     "can_summarize_topics_group",
                     "create_multiuse_invite_group",
@@ -1471,8 +1481,36 @@ function should_disable_save_button_for_group_settings(settings: string[]): bool
     return false;
 }
 
+function should_disable_save_button_for_stream_settings(stream_id: number): boolean {
+    // Disable save button if "Only general chat topic allowed" option is selected
+    // for `topics_policy` and there are topics other than the general chat in the
+    // current channel.
+    const topics_policy_value = $("#id_topics_policy").val();
+    if (
+        topics_policy_value ===
+            settings_config.get_stream_topics_policy_values().empty_topic_only.code &&
+        stream_topic_history.stream_has_locally_available_named_topics(stream_id)
+    ) {
+        $("#settings-topics-already-exist-error").show();
+        return true;
+    }
+    $("#settings-topics-already-exist-error").hide();
+    return false;
+}
+
 function enable_or_disable_save_button($subsection_elem: JQuery): void {
     const $save_button = $subsection_elem.find(".save-button");
+
+    if ($subsection_elem.closest(".advanced-configurations-container").length > 0) {
+        const $settings_container = $subsection_elem.closest(".subscription_settings");
+        const stream_id_string = $settings_container.attr("data-stream-id");
+        assert(stream_id_string !== undefined);
+        const stream_id = Number.parseInt(stream_id_string, 10);
+        if (should_disable_save_button_for_stream_settings(stream_id)) {
+            $save_button.prop("disabled", true);
+            return;
+        }
+    }
 
     const time_limit_settings = [...$subsection_elem.find(".time-limit-setting")];
     if (
@@ -1481,7 +1519,7 @@ function enable_or_disable_save_button($subsection_elem: JQuery): void {
     ) {
         if (
             $subsection_elem.attr("id") === "org-message-retention" ||
-            $subsection_elem.hasClass("advanced-configurations-container")
+            $subsection_elem.closest(".advanced-configurations-container").length > 0
         ) {
             ui_util.disable_element_and_add_tooltip(
                 $save_button,
@@ -1575,6 +1613,8 @@ export const group_setting_widget_map = new Map<string, GroupSettingPillContaine
     ["can_leave_group", null],
     ["can_manage_group", null],
     ["can_mention_group", null],
+    ["can_delete_any_message_group", null],
+    ["can_delete_own_message_group", null],
     ["can_move_messages_out_of_channel_group", null],
     ["can_move_messages_within_channel_group", null],
     ["can_remove_members_group", null],
@@ -1597,6 +1637,7 @@ export const group_setting_widget_map = new Map<string, GroupSettingPillContaine
     ["realm_can_move_messages_between_channels_group", null],
     ["realm_can_move_messages_between_topics_group", null],
     ["realm_can_resolve_topics_group", null],
+    ["realm_can_set_delete_message_policy_group", null],
     ["realm_can_set_topics_policy_group", null],
     ["realm_can_summarize_topics_group", null],
     ["realm_create_multiuse_invite_group", null],
@@ -1698,15 +1739,6 @@ export function create_group_setting_widget({
     return pill_widget;
 }
 
-export const realm_group_setting_name_supporting_anonymous_groups_schema =
-    group_permission_settings.realm_group_setting_name_schema.exclude([
-        "can_access_all_users_group",
-        "can_create_web_public_channel_group",
-    ]);
-export type RealmGroupSettingNameSupportingAnonymousGroups = z.infer<
-    typeof realm_group_setting_name_supporting_anonymous_groups_schema
->;
-
 export function create_realm_group_setting_widget({
     $pill_container,
     setting_name,
@@ -1731,7 +1763,7 @@ export function create_realm_group_setting_widget({
     set_group_setting_widget_value(
         pill_widget,
         group_setting_value_schema.parse(
-            realm[realm_schema.keyof().parse("realm_" + setting_name)],
+            realm[z.keyof(realm_schema).parse("realm_" + setting_name)],
         ),
     );
 
@@ -1858,7 +1890,7 @@ export function get_group_assigned_realm_permissions(group: UserGroup): {
     } of settings_config.realm_group_permission_settings) {
         const assigned_permission_objects = [];
         for (const setting_name of settings) {
-            const setting_value = realm[realm_schema.keyof().parse("realm_" + setting_name)];
+            const setting_value = realm[z.keyof(realm_schema).parse("realm_" + setting_name)];
             const can_edit = settings_config.owner_editable_realm_group_permission_settings.has(
                 setting_name,
             )
@@ -1899,7 +1931,7 @@ export function get_group_assigned_stream_permissions(group: UserGroup): {
         const can_edit_settings_with_content_access =
             stream_data.can_change_permissions_requiring_content_access(sub);
         for (const setting_name of settings_config.stream_group_permission_settings) {
-            const setting_value = sub[stream_subscription_schema.keyof().parse(setting_name)];
+            const setting_value = sub[z.keyof(stream_subscription_schema).parse(setting_name)];
             let can_edit_settings = can_edit_settings_with_metadata_access;
             if (
                 settings_config.stream_group_permission_settings_requiring_content_access.includes(
@@ -1946,7 +1978,7 @@ export function get_group_assigned_user_group_permissions(group: UserGroup): {
         const assigned_permission_objects = [];
         for (const setting_name of settings_config.group_permission_settings) {
             const setting_value =
-                user_group[user_groups.user_group_schema.keyof().parse(setting_name)];
+                user_group[z.keyof(user_groups.user_group_schema).parse(setting_name)];
             const assigned_permission_object =
                 group_permission_settings.get_assigned_permission_object(
                     group_setting_value_schema.parse(setting_value),

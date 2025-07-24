@@ -1,6 +1,6 @@
 import $ from "jquery";
 import assert from "minimalistic-assert";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import render_subscription_invites_warning_modal from "../templates/confirm_dialog/confirm_subscription_invites_warning.hbs";
 import render_change_stream_info_modal from "../templates/stream_settings/change_stream_info_modal.hbs";
@@ -76,6 +76,8 @@ export function maybe_update_error_message(): void {
 const group_setting_widget_map = new Map<string, GroupSettingPillContainer | null>([
     ["can_add_subscribers_group", null],
     ["can_administer_channel_group", null],
+    ["can_delete_any_message_group", null],
+    ["can_delete_own_message_group", null],
     ["can_move_messages_out_of_channel_group", null],
     ["can_move_messages_within_channel_group", null],
     ["can_remove_subscribers_group", null],
@@ -426,7 +428,7 @@ function create_stream(): void {
             // The rest of the work is done via the subscribe event we will get
         },
         error(xhr): void {
-            const error_message = z.object({msg: z.string().optional()}).parse(xhr.responseJSON);
+            const error_message = z.object({msg: z.optional(z.string())}).parse(xhr.responseJSON);
             if (error_message?.msg?.includes("access")) {
                 // If we can't access the stream, we can safely
                 // assume it's a duplicate stream that we are not invited to.
@@ -466,10 +468,13 @@ export function new_stream_clicked(stream_name: string, folder_id: number | unde
         $("#create_stream_name").val(stream_name);
     }
     show_new_stream_modal();
-    if (folder_id) {
-        folder_widget!.render(folder_id);
-    } else {
-        folder_widget!.render(-1);
+    if (page_params.development_environment) {
+        assert(folder_widget !== undefined);
+        if (folder_id) {
+            folder_widget.render(folder_id);
+        } else {
+            folder_widget.render(-1);
+        }
     }
     $("#create_stream_name").trigger("focus");
 }
@@ -542,6 +547,15 @@ export function show_new_stream_modal(): void {
     $("#id_new_topics_policy").val(settings_config.get_stream_topics_policy_values().inherit.code);
     if (!stream_data.user_can_set_topics_policy()) {
         $("#id_new_topics_policy").prop("disabled", true);
+    }
+
+    if (!stream_data.user_can_set_delete_message_policy()) {
+        settings_components.disable_group_permission_setting(
+            $("#id_new_can_delete_any_message_group"),
+        );
+        settings_components.disable_group_permission_setting(
+            $("#id_new_can_delete_own_message_group"),
+        );
     }
 
     // set default state for "announce stream" and "default stream" option.

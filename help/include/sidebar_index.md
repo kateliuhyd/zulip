@@ -1,3 +1,5 @@
+<!-- Changes to this file should be propagated to help-beta/astro.config.mjs. -->
+
 ## Guides
 * [Getting started with Zulip](/help/getting-started-with-zulip)
 * [Choosing a team chat app](https://blog.zulip.com/2024/11/04/choosing-a-team-chat-app/)
@@ -119,7 +121,7 @@
 * [Link to a message or conversation](/help/link-to-a-message-or-conversation)
 * [Searching for messages](/help/search-for-messages)
 * [Printing messages](/help/printing-messages)
-* [View message Markdown source](/help/view-the-markdown-source-of-a-message)
+* [View message content as Markdown](/help/view-the-markdown-source-of-a-message)
 * [View when message was sent](/help/view-the-exact-time-a-message-was-sent)
 * [View a message's edit history](/help/view-a-messages-edit-history)
 * [Collapse a message](/help/collapse-a-message)
@@ -216,6 +218,7 @@
 * [Private channels](/help/channel-permissions#private-channels)
 * [Public channels](/help/channel-permissions#public-channels)
 * [Public access option](/help/public-access-option)
+* [“*General chat*” channels](/help/general-chat-channels)
 * [Channel permissions](/help/channel-permissions)
 * [Channel posting policy](/help/channel-posting-policy)
 * [Configure who can administer a channel](/help/configure-who-can-administer-a-channel)

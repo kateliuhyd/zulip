@@ -575,6 +575,8 @@ paths:
                                                 This user-generated HTML content should be rendered
                                                 using the same CSS and client-side security protections
                                                 as are used for message content.
+
+                                                See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                                     - type: object
                                       additionalProperties: false
                                       description: |
@@ -1552,6 +1554,8 @@ paths:
                                     work correctly. And any client-side security logic for
                                     user-generated message content should be applied when displaying
                                     this HTML as though it were the body of a Zulip message.
+
+                                    See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                                 history_public_to_subscribers:
                                   type: boolean
                                   description: |
@@ -1797,6 +1801,60 @@ paths:
                                   "attachment": {"id": 1},
                                   "upload_space_used": 0,
                                   "id": 0,
+                                }
+                            - type: object
+                              additionalProperties: false
+                              description: |
+                                Event sent to a user's clients when the metadata in the
+                                `push_devices` dictionary for the user changes.
+
+                                Helps clients to live-update the `push_devices` dictionary
+                                returned in [`POST /register`](/api/register-queue) response.
+
+                                **Changes**: New in Zulip 11.0 (feature level 406).
+                              properties:
+                                id:
+                                  $ref: "#/components/schemas/EventIdSchema"
+                                type:
+                                  allOf:
+                                    - $ref: "#/components/schemas/EventTypeSchema"
+                                    - enum:
+                                        - push_device
+                                push_account_id:
+                                  type: string
+                                  description: |
+                                    The push account ID for this client registration.
+
+                                    See [`POST /mobile_push/register`](/api/register-push-device)
+                                    for details on push account IDs.
+                                status:
+                                  type: string
+                                  enum:
+                                    - active
+                                    - failed
+                                    - pending
+                                  description: |
+                                    The updated registration status. Will be `"active"`, `"failed"`, or
+                                    `"pending"`.
+                                error_code:
+                                  type: string
+                                  nullable: true
+                                  description: |
+                                    If the status is `"failed"`, a [Zulip API error
+                                    code](/api/rest-error-handling) indicating the type of failure that
+                                    occurred.
+
+                                    The following error codes have recommended client behavior:
+
+                                    - `"INVALID_BOUNCER_PUBLIC_KEY"` - Inform the user to update app.
+                                    - `"REQUEST_EXPIRED` - Retry with a fresh payload.
+                                      If the status is "failed", an error code explaining the failure.
+                              example:
+                                {
+                                  "id": 1,
+                                  "type": "push_device",
+                                  "push_account_id": "1234",
+                                  "status": "active",
                                 }
                             - type: object
                               additionalProperties: false
@@ -2673,7 +2731,7 @@ paths:
                                     Only present if this event changed the message content.
 
                                     The original content of the message with ID `message_id`
-                                    immediately prior to this edit, in the original markdown.
+                                    immediately prior to this edit, in the original [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
                                 orig_rendered_content:
                                   type: string
                                   description: |
@@ -2681,6 +2739,8 @@ paths:
 
                                     The original content of the message with ID `message_id`
                                     immediately prior to this edit, rendered as HTML.
+
+                                    See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                                 content:
                                   type: string
                                   description: |
@@ -2689,7 +2749,7 @@ paths:
                                     [inline URL preview][inline-url-previews].
 
                                     The new content of the message with ID `message_id`, in the
-                                    original Markdown.
+                                    original [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
                                 rendered_content:
                                   type: string
                                   description: |
@@ -2699,6 +2759,8 @@ paths:
 
                                     The new content of the message with ID `message_id`,
                                     rendered in HTML.
+
+                                    See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                                 is_me_message:
                                   type: boolean
                                   description: |
@@ -3197,7 +3259,7 @@ paths:
                                 [message-flags]: /api/update-message-flags#available-flags
                                 [message-event]: /api/get-events#message
                                 [message-delete]: /api/get-events#delete_message
-                                [all-read]: /help/marking-messages-as-read#mark-all-messages-as-read
+                                [all-read]: /help/marking-messages-as-read#mark-messages-in-multiple-topics-and-channels-as-read
                               properties:
                                 id:
                                   $ref: "#/components/schemas/EventIdSchema"
@@ -4786,6 +4848,20 @@ paths:
                                             setting controlled this permission; `true` corresponded to `Everyone`, and
                                             `false` to `Admins`.
                                         - $ref: "#/components/schemas/GroupSettingValue"
+                                    can_set_delete_message_policy_group:
+                                      allOf:
+                                        - description: |
+                                            A [group-setting value](/api/group-setting-values) defining the set of
+                                            users who have permission to change per-channel `can_delete_any_message_group`
+                                            and `can_delete_own_message_group` permission settings. Note that the user
+                                            must be a member of both this group and the `can_administer_channel_group`
+                                            of the channel whose message delete settings they want to change.
+
+                                            Organization administrators can always change these settings of
+                                            every channel.
+
+                                            **Changes**: New in Zulip 11.0 (feature level 407).
+                                        - $ref: "#/components/schemas/GroupSettingValue"
                                     can_set_topics_policy_group:
                                       allOf:
                                         - description: |
@@ -5097,27 +5173,30 @@ paths:
                                       description: |
                                         The URL of the organization's wide logo configured in the
                                         [organization profile](/help/create-your-organization-profile).
-                                    mandatory_topics:
-                                      type: boolean
-                                      deprecated: true
-                                      description: |
-                                        Whether [topics are required](/help/require-topics) for messages in this organization.
-
-                                        **Changes**: Deprecated in Zulip 11.0 (feature level 392). This configuration is
-                                        now controlled by `topics_policy` realm setting.
                                     topics_policy:
                                       type: string
                                       enum:
                                         - allow_empty_topic
                                         - disable_empty_topic
                                       description: |
-                                        Configuration defining the default policy for sending messages in empty topics.
+                                        The organization's default policy for sending channel messages to the
+                                        [empty "general chat" topic](/help/general-chat-topic).
 
-                                        - allow_empty_topic - Topics are not required to send messages in the channels.
-                                        - disable_empty_topic - Topics are required to send messages in the channels.
+                                        - `"allow_empty_topic"`: Channel messages can be sent to the empty topic.
+                                        - `"disable_empty_topic"`: Channel messages cannot be sent to the empty topic.
 
-                                        **Changes**: New in Zulip 11.0 (feature level 392). Previously, this configuration was
-                                        controlled by a boolean realm setting, `mandatory_topics`.
+                                        **Changes**: New in Zulip 11.0 (feature level 392). Previously, this was
+                                        controlled by the boolean realm `mandatory_topics` setting, which is now
+                                        deprecated.
+                                    mandatory_topics:
+                                      type: boolean
+                                      deprecated: true
+                                      description: |
+                                        Whether [topics are required](/help/require-topics) for messages in this
+                                        organization.
+
+                                        **Changes**: Deprecated in Zulip 11.0 (feature level 392). This is now
+                                        controlled by the realm `topics_policy` setting.
                                     max_file_upload_size_mib:
                                       type: integer
                                       description: |
@@ -6019,6 +6098,8 @@ paths:
                                       description: |
                                         The new description of the channel folder. Only present if the
                                         description changed.
+
+                                        See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                                     rendered_description:
                                       type: string
                                       description: |
@@ -6956,7 +7037,7 @@ paths:
                 content:
                   type: string
                   description: |
-                    The content of the saved snippet in text/markdown format.
+                    The content of the saved snippet in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
 
                     Clients should insert this content into a message when using
                     a saved snippet.
@@ -7031,7 +7112,7 @@ paths:
                 content:
                   type: string
                   description: |
-                    The content of the saved snippet in text/markdown format.
+                    The content of the saved snippet in the original [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
 
                     Clients should insert this content into a message when using
                     a saved snippet.
@@ -7898,6 +7979,8 @@ paths:
             If `true`, message content is returned in the rendered HTML
             format. If `false`, message content is returned in the raw
             Markdown-format text that user entered.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
           schema:
             type: boolean
             default: true
@@ -8469,18 +8552,21 @@ paths:
                             content:
                               type: string
                               description: |
-                                The raw Markdown content of the message
+                                The raw [Zulip-flavored Markdown](/help/format-your-message-using-markdown) content of the message
                                 immediately after this edit event.
+
                             rendered_content:
                               type: string
                               description: |
                                 The rendered HTML representation of `content`.
+
+                                See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                             prev_content:
                               type: string
                               description: |
                                 Only present if message's content was edited.
 
-                                The raw Markdown content of the message immediately
+                                The raw [Zulip-flavored Markdown](/help/format-your-message-using-markdown) content of the message immediately
                                 prior to this edit event.
                             prev_rendered_content:
                               type: string
@@ -8488,6 +8574,8 @@ paths:
                                 Only present if message's content was edited.
 
                                 The rendered HTML representation of `prev_content`.
+
+                                See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                             user_id:
                               type: integer
                               nullable: true
@@ -9321,7 +9409,7 @@ paths:
         Additionally, a `raw_content` field is included. This field is
         useful for clients that primarily work with HTML-rendered
         messages but might need to occasionally fetch the message's
-        raw Markdown (e.g. for [view
+        raw [Zulip-flavored Markdown](/help/format-your-message-using-markdown) (e.g. for [view
         source](/help/view-the-markdown-source-of-a-message) or
         prefilling a message edit textarea).
 
@@ -9334,7 +9422,7 @@ paths:
           description: |
             If `true`, message content is returned in the rendered HTML
             format. If `false`, message content is returned in the raw
-            Markdown-format text that user entered.
+            [Zulip-flavored Markdown format](/help/format-your-message-using-markdown) text that user entered.
 
             **Changes**: New in Zulip 5.0 (feature level 120).
           schema:
@@ -9375,6 +9463,8 @@ paths:
                         deprecated: true
                         description: |
                           The raw Markdown content of the message.
+
+                          See the help center article on [message formatting](/help/format-your-message-using-markdown) for details on Zulip-flavored Markdown.
 
                           **Deprecated** and to be removed once no longer required for
                           legacy clients. Modern clients should prefer passing
@@ -10389,6 +10479,152 @@ paths:
           $ref: "#/components/responses/SimpleSuccess"
 
   /users/{user_id}/status:
+    post:
+      operationId: update-status-for-user
+      summary: Update user status
+      tags: ["users"]
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      description: |
+        Administrator endpoint for changing the [status](/help/status-and-availability) of
+        another user.
+      x-requires-administrator: true
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                status_text:
+                  type: string
+                  description: |
+                    The text content of the status message. Sending the empty string
+                    will clear the user's status.
+
+                    **Note**: The limit on the size of the message is 60 characters.
+                  example: on vacation
+                emoji_name:
+                  type: string
+                  description: |
+                    The name for the emoji to associate with this status.
+
+                    **Changes**: New in Zulip 5.0 (feature level 86).
+                  example: car
+                emoji_code:
+                  type: string
+                  description: |
+                    A unique identifier, defining the specific emoji codepoint requested,
+                    within the namespace of the `reaction_type`.
+
+                    **Changes**: New in Zulip 5.0 (feature level 86).
+                  example: 1f697
+                reaction_type:
+                  type: string
+                  description: |
+                    A string indicating the type of emoji. Each emoji `reaction_type`
+                    has an independent namespace for values of `emoji_code`.
+
+                    Must be one of the following values:
+
+                    - `unicode_emoji` : In this namespace, `emoji_code` will be a
+                      dash-separated hex encoding of the sequence of Unicode codepoints
+                      that define this emoji in the Unicode specification.
+
+                    - `realm_emoji` : In this namespace, `emoji_code` will be the ID of
+                      the uploaded [custom emoji](/help/custom-emoji).
+
+                    - `zulip_extra_emoji` : These are special emoji included with Zulip.
+                      In this namespace, `emoji_code` will be the name of the emoji (e.g.
+                      "zulip").
+
+                    **Changes**: New in Zulip 5.0 (feature level 86).
+                  example: unicode_emoji
+            encoding:
+              away:
+                contentType: application/json
+      responses:
+        "200":
+          $ref: "#/components/responses/SimpleSuccess"
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Insufficient permission",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response user making request does not have permission to update other user's status.:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Client did not pass any new values.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when no changes were requested:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "status_text is too long (limit: 60 characters)",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when the
+                          `status_text` message exceeds the limit of
+                          60 characters:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Client must pass emoji_name if they pass either emoji_code or reaction_type.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when `emoji_name` is not specified
+                          but `emoji_code` or `reaction_type` is specified:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Emoji 'invalid' does not exist",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when the emoji name does not exist:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Invalid emoji name.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when the emoji name is invalid:
+                  - allOf:
+                      - $ref: "#/components/schemas/CodedError"
+                      - example:
+                          {
+                            "result": "error",
+                            "msg": "Invalid custom emoji.",
+                            "code": "BAD_REQUEST",
+                          }
+                        description: |
+                          An example JSON error response when the custom emoji is invalid:
     get:
       operationId: get-user-status
       summary: Get a user's status
@@ -11654,6 +11890,8 @@ paths:
                           The [description](/help/change-the-channel-description)
                           to use for a new channel being created, in text/markdown format.
 
+                          See the help center article on [message formatting](/help/format-your-message-using-markdown) for details on Zulip-flavored Markdown.
+
                           Clients should use the `max_stream_description_length` returned
                           by the [`POST /register`](/api/register-queue) endpoint to
                           determine the maximum channel description length.
@@ -11741,6 +11979,10 @@ paths:
                   $ref: "#/components/schemas/CanRemoveSubscribersGroup"
                 can_administer_channel_group:
                   $ref: "#/components/schemas/CanAdministerChannelGroup"
+                can_delete_any_message_group:
+                  $ref: "#/components/schemas/CanDeleteAnyMessageGroup"
+                can_delete_own_message_group:
+                  $ref: "#/components/schemas/CanDeleteOwnMessageGroup"
                 can_move_messages_out_of_channel_group:
                   $ref: "#/components/schemas/CanMoveMessagesOutOfChannelGroup"
                 can_move_messages_within_channel_group:
@@ -11805,6 +12047,10 @@ paths:
               can_remove_subscribers_group:
                 contentType: application/json
               can_administer_channel_group:
+                contentType: application/json
+              can_delete_any_message_group:
+                contentType: application/json
+              can_delete_own_message_group:
                 contentType: application/json
               can_move_messages_out_of_channel_group:
                 contentType: application/json
@@ -12293,6 +12539,93 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/InvalidPushDeviceTokenError"
                   - $ref: "#/components/schemas/InvalidRemotePushDeviceTokenError"
+  /mobile_push/register:
+    post:
+      operationId: register-push-device
+      summary: Register E2EE push device
+      tags: ["mobile"]
+      description: |
+        Register a device to receive end-to-end encrypted mobile push notifications.
+
+        **Changes**: New in Zulip 11.0 (feature level 406).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token_kind:
+                  description: |
+                    Whether the token was generated by FCM or APNs.
+                  type: string
+                  enum:
+                    - fcm
+                    - apns
+                  example: "fcm"
+                push_account_id:
+                  description: |
+                    A random integer generated by the client that will be included
+                    in mobile push notifications along with encrypted payloads to
+                    identify pushes as being related to this registration.
+                    Must be unique in the client's table of accounts.
+                  type: integer
+                  example: 2408
+                push_public_key:
+                  description: |
+                    Public part of the asymmetric key pair generated by the client
+                    using NaCl (the Networking and Cryptography Library), encoded
+                    using a RFC 4648 standard base64 encoder.
+
+                    It is used to encrypt notifications for delivery to the client.
+                  type: string
+                  example: "push-public-key"
+                bouncer_public_key:
+                  description: |
+                    Which of the bouncer's public keys the client used to encrypt the
+                    `PushRegistration` dictionary.
+
+                    When the bouncer rotates the key, a new asymmetric key pair is created,
+                    and the new public key is baked into a new client release. Because
+                    the bouncer routinely rotates key, this field clarifies which
+                    public key the client is using.
+                  type: string
+                  example: "bouncer-public-key"
+                encrypted_push_registration:
+                  description: |
+                    Ciphertext generated by encrypting a `PushRegistration` dictionary
+                    using the `bouncer_public_key`, encoded using a RFC 4648 standard
+                    base64 encoder.
+
+                    The `PushRegistration` dictionary contains the fields `token`,
+                    `token_kind`, `timestamp`, and (for iOS devices) `ios_app_id`.
+                    The dictionary is JSON-encoded before encryption.
+                  type: string
+                  example: "encrypted-push-registration-data"
+              required:
+                - token_kind
+                - push_account_id
+                - push_public_key
+                - bouncer_public_key
+                - encrypted_push_registration
+      responses:
+        "200":
+          $ref: "#/components/responses/SimpleSuccess"
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CodedError"
+                  - example:
+                      {
+                        "result": "error",
+                        "msg": "Server is not configured to use push notification service.",
+                        "code": "PUSH_SERVICE_NOT_CONFIGURED",
+                      }
+                    description: |
+                      Error when the server is not configured to use push notification service:
   /user_topics:
     post:
       operationId: update-user-topic
@@ -12508,7 +12841,7 @@ paths:
                   description: |
                     The token provided by the device.
                   type: string
-                  example: apple-tokenbb
+                  example: c0ffee
                 appid:
                   description: |
                     The ID of the Zulip app that is making the request.
@@ -12569,7 +12902,7 @@ paths:
                   description: |
                     The token provided by the device.
                   type: string
-                  example: apple-tokenbb
+                  example: c0ffee
               required:
                 - token
       responses:
@@ -16477,6 +16810,8 @@ paths:
                                 can_add_subscribers_group: {}
                                 can_remove_subscribers_group: {}
                                 can_administer_channel_group: {}
+                                can_delete_any_message_group: {}
+                                can_delete_own_message_group: {}
                                 can_move_messages_out_of_channel_group: {}
                                 can_move_messages_within_channel_group: {}
                                 can_send_message_group: {}
@@ -16782,8 +17117,16 @@ paths:
                         properties:
                           twenty_four_hour_time:
                             type: boolean
+                            nullable: true
                             description: |
                               Whether time should be [displayed in 24-hour notation](/help/change-the-time-format).
+
+                              A `null` value indicates that the client should use the default time
+                              format for the user's locale.
+
+                              **Changes**: Prior to Zulip 11.0 (feature level 408), `null`
+                              was not a valid value for this setting. Note that it was not possible
+                              to actually set the time format to `null` at this feature level.
                           web_mark_read_on_scroll_policy:
                             type: integer
                             description: |
@@ -17339,6 +17682,39 @@ paths:
                           before using this API key.
 
                           **Changes**: Added in Zulip 4.0 (feature level 47).
+                      push_devices:
+                        type: object
+                        description: |
+                          Present if `push_device` is present in `fetch_event_types`.
+
+                          Dictionary where each entry describes the user's push device's
+                          registration status and error code (if registration failed).
+
+                          **Changes**: New in Zulip 11.0 (feature level 406).
+                        additionalProperties:
+                          description: |
+                            `{push_account_id}`: Dictionary containing the details of
+                            a push device with the push account ID as the key.
+                          type: object
+                          additionalProperties: false
+                          properties:
+                            status:
+                              type: string
+                              description: |
+                                The push account's registration status.
+                                Either `"active"`, `"pending"`, or `"failed"`.
+                            error_code:
+                              type: string
+                              nullable: true
+                              description: |
+                                If the status is `"failed"`, a [Zulip API error
+                                code](/api/rest-error-handling) indicating the type of failure that
+                                occurred.
+
+                                The following error codes have recommended client behavior:
+
+                                - `"INVALID_BOUNCER_PUBLIC_KEY"` - Inform the user to update app.
+                                - `"REQUEST_EXPIRED` - Retry with a fresh payload.
                       enable_desktop_notifications:
                         deprecated: true
                         type: boolean
@@ -18107,6 +18483,22 @@ paths:
                               setting controlled this permission; `true` corresponded to `Everyone`, and
                               `false` to `Admins`.
                           - $ref: "#/components/schemas/GroupSettingValue"
+                      realm_can_set_delete_message_policy_group:
+                        allOf:
+                          - description: |
+                              Present if `realm` is present in `fetch_event_types`.
+
+                              A [group-setting value](/api/group-setting-values) defining the set of
+                              users who have permission to change per-channel `can_delete_any_message_group`
+                              and `can_delete_own_message_group` permission settings. Note that the user
+                              must be a member of both this group and the `can_administer_channel_group`
+                              of the channel whose message delete settings they want to change.
+
+                              Organization administrators can always change these settings of
+                              every channel.
+
+                              **Changes**: New in Zulip 11.0 (feature level 407).
+                          - $ref: "#/components/schemas/GroupSettingValue"
                       realm_can_set_topics_policy_group:
                         allOf:
                           - description: |
@@ -18513,16 +18905,6 @@ paths:
 
                           Whether this organization has been configured to enable
                           [previews of linked websites](/help/image-video-and-website-previews).
-                      realm_mandatory_topics:
-                        type: boolean
-                        deprecated: true
-                        description: |
-                          Present if `realm` is present in `fetch_event_types`.
-
-                          Whether [topics are required](/help/require-topics) for messages in this organization.
-
-                          **Changes**: Deprecated in Zulip 11.0 (feature level 392). This configuration is
-                          now controlled by `topics_policy` realm setting.
                       realm_topics_policy:
                         type: string
                         enum:
@@ -18531,13 +18913,26 @@ paths:
                         description: |
                           Present if `realm` is present in `fetch_event_types`.
 
-                          Configuration defining the default policy for sending messages in empty topics.
+                          The organization's default policy for sending channel messages to the
+                          [empty "general chat" topic](/help/require-topics).
 
-                          - allow_empty_topic - Topics are not required to send messages in the channels.
-                          - disable_empty_topic - Topics are required to send messages in the channels.
+                          - `"allow_empty_topic"`: Channel messages can be sent to the empty topic.
+                          - `"disable_empty_topic"`: Channel messages cannot be sent to the empty topic.
 
-                          **Changes**: New in Zulip 11.0 (feature level 392). Previously, this configuration was
-                          controlled by a boolean realm setting, `mandatory_topics`.
+                          **Changes**: New in Zulip 11.0 (feature level 392). Previously, this was
+                          controlled by the boolean `realm_mandatory_topics` setting, which is now
+                          deprecated.
+                      realm_mandatory_topics:
+                        type: boolean
+                        deprecated: true
+                        description: |
+                          Present if `realm` is present in `fetch_event_types`.
+
+                          Whether [topics are required](/help/require-topics) for messages in this
+                          organization.
+
+                          **Changes**: Deprecated in Zulip 11.0 (feature level 392). This is now
+                          controlled by the realm `topics_policy` setting.
                       realm_message_retention_days:
                         type: integer
                         description: |
@@ -19582,14 +19977,21 @@ paths:
                         properties:
                           twenty_four_hour_time:
                             type: boolean
+                            nullable: true
                             description: |
                               Whether time should be [displayed in 24-hour notation](/help/change-the-time-format).
 
-                              **Changes**: New in Zulip 5.0 (feature level 99).
-                              This value was previously available as
-                              `realm_default_twenty_four_hour_time` in
-                              the top-level response object (only when `realm` was
-                              present in `fetch_event_types`).
+                              A `null` value indicates that the client should use the default time
+                              format for the user's locale.
+
+                              **Changes**: Prior to Zulip 11.0 (feature level 408), `null`
+                              was not a valid value for this setting. Note that it was not possible
+                              to actually set the time format to `null` at this feature level.
+
+                              New in Zulip 5.0 (feature level 99). This value was previously
+                              available as `realm_default_twenty_four_hour_time` in the top-level
+                              response object (only when `realm` was present in
+                              `fetch_event_types`).
                           web_mark_read_on_scroll_policy:
                             type: integer
                             description: |
@@ -21764,6 +22166,8 @@ paths:
                                 can_add_subscribers_group: {}
                                 can_remove_subscribers_group: {}
                                 can_administer_channel_group: {}
+                                can_delete_any_message_group: {}
+                                can_delete_own_message_group: {}
                                 can_move_messages_out_of_channel_group: {}
                                 can_move_messages_within_channel_group: {}
                                 can_send_message_group: {}
@@ -22001,7 +22405,7 @@ paths:
                 description:
                   description: |
                     The new [description](/help/change-the-channel-description) for
-                    the channel, in text/markdown format.
+                    the channel, in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
 
                     Clients should use the `max_stream_description_length` returned
                     by the [`POST /register`](/api/register-queue) endpoint to
@@ -22190,6 +22594,58 @@ paths:
                           "old": 15,
                         }
                     - $ref: "#/components/schemas/GroupSettingValueUpdate"
+                can_delete_any_message_group:
+                  allOf:
+                    - description: |
+                        The set of users who have permission to delete any message in the channel
+                        expressed as an [update to a group-setting value][update-group-setting].
+
+                        [update-group-setting]: /api/group-setting-values#updating-group-setting-values
+
+                        Note that a user must [have content access](/help/channel-permissions) to a
+                        channel in order to delete any message in the channel.
+
+                        Users present in the organization-level `can_delete_any_message_group` setting
+                        can always delete any message in the channel if they
+                        [have content access](/help/channel-permissions) to that channel.
+
+                        **Changes**: New in Zulip 11.0 (feature level 407). Prior to this
+                        change, only the users in `can_delete_any_message_group` were able
+                        delete any message in the organization.
+                      example:
+                        {
+                          "new":
+                            {"direct_members": [10], "direct_subgroups": [11]},
+                          "old": 15,
+                        }
+                    - $ref: "#/components/schemas/GroupSettingValueUpdate"
+                can_delete_own_message_group:
+                  allOf:
+                    - description: |
+                        The set of users who have permission to delete the messages that they have
+                        sent in the channel expressed as an [update to a group-setting value][update-group-setting].
+
+                        [update-group-setting]: /api/group-setting-values#updating-group-setting-values
+
+                        Note that a user must [have content access](/help/channel-permissions) to a
+                        channel in order to delete their own message in the channel.
+
+                        Users with permission to delete any message in the channel
+                        and users present in the organization-level `can_delete_own_message_group` setting
+                        can always delete their own messages in the channel if they
+                        [have content access](/help/channel-permissions) to that channel.
+
+                        **Changes**: New in Zulip 11.0 (feature level 407). Prior to this
+                        change, only the users in the organization-level `can_delete_any_message_group`
+                        and `can_delete_own_message_group` settings were able delete their own messages in
+                        the organization.
+                      example:
+                        {
+                          "new":
+                            {"direct_members": [10], "direct_subgroups": [11]},
+                          "old": 15,
+                        }
+                    - $ref: "#/components/schemas/GroupSettingValueUpdate"
                 can_move_messages_out_of_channel_group:
                   allOf:
                     - description: |
@@ -22325,6 +22781,10 @@ paths:
               can_remove_subscribers_group:
                 contentType: application/json
               can_administer_channel_group:
+                contentType: application/json
+              can_delete_any_message_group:
+                contentType: application/json
+              can_delete_own_message_group:
                 contentType: application/json
               can_move_messages_out_of_channel_group:
                 contentType: application/json
@@ -24053,7 +24513,7 @@ paths:
                   data:
                     type: string
                     description: |
-                      The message content, in raw Markdown format (not rendered to HTML).
+                      The message content, in raw [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format (not rendered to HTML).
                   trigger:
                     type: string
                     description: |
@@ -24103,6 +24563,8 @@ paths:
                             type: string
                             description: |
                               The content/body of the message rendered in HTML.
+
+                              See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
                 example:
                   {
                     "data": "@**Outgoing webhook test** Zulip is the world\u2019s most productive group chat!",
@@ -24318,6 +24780,8 @@ components:
             can_add_subscribers_group: {}
             can_remove_subscribers_group: {}
             can_administer_channel_group: {}
+            can_delete_any_message_group: {}
+            can_delete_own_message_group: {}
             can_move_messages_out_of_channel_group: {}
             can_move_messages_within_channel_group: {}
             can_send_message_group: {}
@@ -24383,9 +24847,11 @@ components:
         description:
           type: string
           description: |
-            The short description of the channel in text/markdown format,
+            The short description of the channel in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format,
             intended to be used to prepopulate UI for editing a channel's
             description.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
         date_created:
           type: integer
           description: |
@@ -24516,6 +24982,10 @@ components:
           $ref: "#/components/schemas/CanRemoveSubscribersGroup"
         can_administer_channel_group:
           $ref: "#/components/schemas/CanAdministerChannelGroup"
+        can_delete_any_message_group:
+          $ref: "#/components/schemas/CanDeleteAnyMessageGroup"
+        can_delete_own_message_group:
+          $ref: "#/components/schemas/CanDeleteOwnMessageGroup"
         can_move_messages_out_of_channel_group:
           $ref: "#/components/schemas/CanMoveMessagesOutOfChannelGroup"
         can_move_messages_within_channel_group:
@@ -24717,7 +25187,7 @@ components:
         This is an unstable API. Please discuss in chat.zulip.org before
         using it.
 
-        **Changes**: As of Zulip 11.0 (feature level ZF-f9d19d), this
+        **Changes**: As of Zulip 11.0 (feature level 403), this
         object is reserved for integration-specific configuration options
         that can be set when creating a bot user. Previously, this object
         also included optional webhook URL parameters, which are now
@@ -24752,7 +25222,7 @@ components:
         This is an unstable API expected to be used only by the Zulip web
         app. Please discuss in chat.zulip.org before using it.
 
-        **Changes**: New in Zulip 11.0 (feature level ZF-f9d19d). Previously,
+        **Changes**: New in Zulip 11.0 (feature level 403). Previously,
         these optional URL parameter options were included in the
         `config_options` object.
       items:
@@ -25415,9 +25885,11 @@ components:
         description:
           type: string
           description: |
-            The [description](/help/change-the-channel-description) of the channel in text/markdown format,
+            The [description](/help/change-the-channel-description) of the channel in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format,
             intended to be used to prepopulate UI for editing a channel's
             description.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
 
             See also `rendered_description`.
         rendered_description:
@@ -25648,6 +26120,10 @@ components:
           $ref: "#/components/schemas/CanRemoveSubscribersGroup"
         can_administer_channel_group:
           $ref: "#/components/schemas/CanAdministerChannelGroup"
+        can_delete_any_message_group:
+          $ref: "#/components/schemas/CanDeleteAnyMessageGroup"
+        can_delete_own_message_group:
+          $ref: "#/components/schemas/CanDeleteOwnMessageGroup"
         can_move_messages_out_of_channel_group:
           $ref: "#/components/schemas/CanMoveMessagesOutOfChannelGroup"
         can_move_messages_within_channel_group:
@@ -25894,12 +26370,17 @@ components:
           type: string
           description: |
             The content/body of the message.
+            When `apply_markdown` is set, it will be in HTML format.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
         content_type:
           type: string
           description: |
             The HTTP `content_type` for the message content. This
             will be `text/html` or `text/x-markdown`, depending on
             whether `apply_markdown` was set.
+
+            See the help center article on [message formatting](/help/format-your-message-using-markdown) for details on Zulip-flavored Markdown.
         display_recipient:
           oneOf:
             - type: string
@@ -25947,6 +26428,8 @@ components:
                   Only present if message's content was edited.
 
                   The rendered HTML representation of `prev_content`.
+
+                  See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
               prev_stream:
                 type: integer
                 description: |
@@ -26435,7 +26918,7 @@ components:
         content:
           type: string
           description: |
-            The content of the saved snippet in text/markdown format.
+            The content of the saved snippet in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
 
             Clients should insert this content into a message when using
             a saved snippet.
@@ -26485,7 +26968,9 @@ components:
         content:
           type: string
           description: |
-            The content/body of the scheduled message, in text/markdown format.
+            The content/body of the scheduled message, in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
         rendered_content:
           type: string
           description: |
@@ -26561,7 +27046,9 @@ components:
         content:
           type: string
           description: |
-            The content/body of the reminder, in text/markdown format.
+            The content/body of the reminder, in [Zulip-flavored Markdown](/help/format-your-message-using-markdown) format.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
         rendered_content:
           type: string
           description: |
@@ -26847,6 +27334,8 @@ components:
               This user-generated HTML content should be rendered
               using the same CSS and client-side security protections
               as are used for message content.
+
+              See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
     ChannelFolder:
       type: object
       additionalProperties: false
@@ -26872,6 +27361,8 @@ components:
           type: string
           description: |
             The description of the channel folder.
+
+            See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
         rendered_description:
           type: string
           description: |
@@ -27514,14 +28005,37 @@ components:
         - inherit
         - allow_empty_topic
         - disable_empty_topic
+        - empty_topic_only
+      example: inherit
       description: |
-        Configuration defining the default policy for sending messages in the empty topic.
+        Whether [named topics](/help/introduction-to-topics) and the empty
+        topic (i.e., ["general chat" topic](/help/general-chat-topic))
+        are enabled in this channel.
 
-        - inherit - Channel will inherit the organization-level setting, `realm_topics_policy`.
-        - allow_empty_topic - Topics are not required to send messages in the channel.
-        - disable_empty_topic - Topics are required to send messages in the channel.
+        - `"inherit"`: Messages can be sent to named topics in this channel,
+          and the [organization-level `realm_topics_policy`][realm-topics-policy]
+          is used for whether messages can be sent to the empty topic in this
+          channel.
+        - `"allow_empty_topic"`: Messages can be sent to both named topics and
+          the empty topic in this channel.
+        - `"disable_empty_topic"`: Messages can be sent to named topics in this
+          channel, but the empty topic is disabled.
+        - `"empty_topic_only"`: Messages can be sent to the empty topic in this
+          channel, but named topics are disabled. See ["general chat"
+          channels](/help/general-chat-channels).
 
-        **Changes**: New in Zulip 11.0 (feature level 392).
+        The `"empty_topic_only"` policy can only be set if all existing messages
+        in the channel are already in the empty topic.
+
+        When creating a new channel, if the `topics_policy` is not specified, the
+        `"inherit"` option will be set.
+
+        **Changes**: In Zulip 11.0 (feature level 404), the `"empty_topic_only"`
+        option was added.
+
+        New in Zulip 11.0 (feature level 392).
+
+        [realm-topics-policy]: /help/require-topics#set-the-default-general-chat-topic-configuration
     ChannelCanAddSubscribersGroup:
       allOf:
         - $ref: "#/components/schemas/GroupSettingValue"
@@ -27594,6 +28108,48 @@ components:
             New in Zulip 10.0 (feature level 325). Prior to this
             change, the permission to administer channels was limited to realm
             administrators.
+
+            [setting-values]: /api/group-setting-values
+    CanDeleteAnyMessageGroup:
+      allOf:
+        - $ref: "#/components/schemas/GroupSettingValue"
+        - description: |
+            A [group-setting value][setting-values] defining the set of users
+            who have permission to delete any message in the channel.
+
+            Note that a user must [have content access](/help/channel-permissions) to a
+            channel in order to delete any message in the channel.
+
+            Users present in the organization-level `can_delete_any_message_group`
+            setting can always delete any message in the channel if they
+            [have content access](/help/channel-permissions) to that channel.
+
+            **Changes**: New in Zulip 11.0 (feature level 407). Prior to this
+            change, only the users in `can_delete_any_message_group` were able
+            delete any message in the organization.
+
+            [setting-values]: /api/group-setting-values
+    CanDeleteOwnMessageGroup:
+      allOf:
+        - $ref: "#/components/schemas/GroupSettingValue"
+        - description: |
+            A [group-setting value][setting-values] defining the set of users
+            who have permission to delete the messages that they have sent in the channel.
+
+            [update-group-setting]: /api/group-setting-values#updating-group-setting-values
+
+            Note that a user must [have content access](/help/channel-permissions) to a
+            channel in order to delete their own message in the channel.
+
+            Users with permission to delete any message in the channel
+            and users present in the organization-level `can_delete_own_message_group` setting
+            can always delete their own messages in the channel if they
+            [have content access](/help/channel-permissions) to that channel.
+
+            **Changes**: New in Zulip 11.0 (feature level 407). Prior to this
+            change, only the users in the organization-level `can_delete_any_message_group`
+            and `can_delete_own_message_group` settings were able delete their own messages in
+            the organization.
 
             [setting-values]: /api/group-setting-values
     CanMoveMessagesOutOfChannelGroup:

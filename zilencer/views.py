@@ -12,8 +12,9 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
 from django.db import IntegrityError, transaction
-from django.db.models import Model
+from django.db.models import Model, QuerySet
 from django.db.models.constants import OnConflict
+from django.db.models.functions import Lower
 from django.http import HttpRequest, HttpResponse
 from django.utils.crypto import constant_time_compare, get_random_string
 from django.utils.timezone import now as timezone_now
@@ -22,7 +23,11 @@ from django.utils.translation import gettext as err_
 from django.views.decorators.csrf import csrf_exempt
 from dns import resolver as dns_resolver
 from dns.exception import DNSException
-from pydantic import BaseModel, ConfigDict, Json, StringConstraints
+from nacl.encoding import Base64Encoder
+from nacl.exceptions import CryptoError
+from nacl.public import PrivateKey, SealedBox
+from pydantic import BaseModel, ConfigDict, Json, StringConstraints, model_validator
+from pydantic import ValidationError as PydanticValidationError
 from pydantic.functional_validators import AfterValidator
 
 from analytics.lib.counts import (
@@ -38,15 +43,21 @@ from zerver.decorator import require_post
 from zerver.lib.email_validation import validate_is_not_disposable
 from zerver.lib.exceptions import (
     ErrorCode,
+    InvalidBouncerPublicKeyError,
+    InvalidEncryptedPushRegistrationError,
     JsonableError,
+    MissingRemoteRealmError,
     RateLimitedError,
     RemoteRealmServerMismatchError,
     RemoteServerDeactivatedError,
+    RequestExpiredError,
 )
 from zerver.lib.outgoing_http import OutgoingSession
 from zerver.lib.push_notifications import (
+    PUSH_REGISTRATION_LIVENESS_TIMEOUT,
     HostnameAlreadyInUseBouncerError,
     InvalidRemotePushDeviceTokenError,
+    RealmPushStatusDict,
     UserPushIdentityCompat,
     send_android_push_notification,
     send_apple_push_notification,
@@ -64,7 +75,7 @@ from zerver.lib.remote_server import (
 from zerver.lib.request import RequestNotes
 from zerver.lib.response import json_success
 from zerver.lib.send_email import EMAIL_DATE_FORMAT, FromAddress
-from zerver.lib.timestamp import timestamp_to_datetime
+from zerver.lib.timestamp import datetime_to_timestamp, timestamp_to_datetime
 from zerver.lib.typed_endpoint import (
     ApnsAppId,
     JsonBodyPayload,
@@ -75,15 +86,17 @@ from zerver.lib.typed_endpoint import (
 from zerver.lib.typed_endpoint_validators import check_string_fixed_length
 from zerver.lib.types import RemoteRealmDictValue
 from zerver.models.realm_audit_logs import AuditLogEventType
-from zerver.models.realms import DisposableEmailError
+from zerver.models.realms import DisposableEmailError, Realm
 from zilencer.auth import (
     InvalidZulipServerKeyError,
     generate_registration_transfer_verification_secret,
     validate_registration_transfer_verification_secret,
 )
+from zilencer.lib.push_notifications import send_e2ee_push_notifications
 from zilencer.lib.remote_counts import MissingDataError
 from zilencer.models import (
     RemoteInstallationCount,
+    RemotePushDevice,
     RemotePushDeviceToken,
     RemoteRealm,
     RemoteRealmAuditLog,
@@ -414,6 +427,26 @@ def check_transfer_challenge_response_secret_not_prepared(response: requests.Res
     return secret_not_prepared
 
 
+def get_remote_push_device_token(
+    *,
+    server: RemoteZulipServer,
+    token: str,
+    kind: int,
+) -> QuerySet[RemotePushDeviceToken]:
+    if kind == RemotePushDeviceToken.APNS:
+        return RemotePushDeviceToken.objects.alias(lower_token=Lower("token")).filter(
+            server=server,
+            lower_token=token.lower(),
+            kind=kind,
+        )
+    else:
+        return RemotePushDeviceToken.objects.filter(
+            server=server,
+            token=token,
+            kind=kind,
+        )
+
+
 @typed_endpoint
 def register_remote_push_device(
     request: HttpRequest,
@@ -436,9 +469,11 @@ def register_remote_push_device(
         kwargs: dict[str, object] = {"user_uuid": user_uuid, "user_id": None}
         # Delete pre-existing user_id registration for this user+device to avoid
         # duplication. Further down, uuid registration will be created.
-        RemotePushDeviceToken.objects.filter(
-            server=server, token=token, kind=token_kind, user_id=user_id
-        ).delete()
+        get_remote_push_device_token(
+            server=server,
+            token=token,
+            kind=token_kind,
+        ).filter(user_id=user_id).delete()
     else:
         # One of these is None, so these kwargs will lead to a proper registration
         # of either user_id or user_uuid type
@@ -449,7 +484,7 @@ def register_remote_push_device(
         assert isinstance(user_uuid, str), (
             "Servers new enough to send realm_uuid, should also have user_uuid"
         )
-        remote_realm = get_remote_realm_helper(request, server, realm_uuid, user_uuid)
+        remote_realm = get_remote_realm_helper(request, server, realm_uuid)
         if remote_realm is not None:
             # We want to associate the RemotePushDeviceToken with the RemoteRealm.
             kwargs["remote_realm_id"] = remote_realm.id
@@ -475,6 +510,127 @@ def register_remote_push_device(
     return json_success(request)
 
 
+class PushRegistration(BaseModel):
+    token: str
+    token_kind: str
+    ios_app_id: ApnsAppId | None = None
+    timestamp: int
+
+    def is_valid_token(self) -> bool:
+        if self.token == "" or len(self.token) > 4096:
+            # Invalid token length
+            return False
+
+        if self.token_kind == RemotePushDevice.TokenKind.APNS:
+            try:
+                bytes.fromhex(self.token)
+            except ValueError:
+                return False
+        return True
+
+    @model_validator(mode="after")
+    def validate_terms(self) -> "PushRegistration":
+        if self.token_kind not in [RemotePushDevice.TokenKind.APNS, RemotePushDevice.TokenKind.FCM]:
+            raise ValueError("Invalid token_kind")
+
+        if self.token_kind == RemotePushDevice.TokenKind.APNS and self.ios_app_id is None:
+            raise ValueError("Missing ios_app_id")
+
+        if self.token_kind == RemotePushDevice.TokenKind.FCM and self.ios_app_id is not None:
+            raise ValueError(
+                f"For token_kind={RemotePushDevice.TokenKind.FCM}, ios_app_id should be null"
+            )
+
+        if not self.is_valid_token():
+            raise ValueError("Invalid token")
+
+        return self
+
+
+def do_register_remote_push_device(
+    bouncer_public_key: str,
+    encrypted_push_registration: str,
+    push_account_id: int,
+    *,
+    realm: Realm | None = None,
+    remote_realm: RemoteRealm | None = None,
+) -> int:
+    assert (realm is None) ^ (remote_realm is None)
+
+    assert settings.PUSH_REGISTRATION_ENCRYPTION_KEYS
+    if bouncer_public_key not in settings.PUSH_REGISTRATION_ENCRYPTION_KEYS:
+        raise InvalidBouncerPublicKeyError
+
+    # Decrypt push_registration
+    bouncer_private_key: str = settings.PUSH_REGISTRATION_ENCRYPTION_KEYS[bouncer_public_key]
+    private_key = PrivateKey(bouncer_private_key.encode("utf-8"), encoder=Base64Encoder)
+    unseal_box = SealedBox(private_key)
+
+    try:
+        push_registration_bytes = unseal_box.decrypt(
+            Base64Encoder.decode(encrypted_push_registration.encode("utf-8"))
+        )
+    except (TypeError, CryptoError):
+        raise InvalidEncryptedPushRegistrationError
+
+    try:
+        push_registration = PushRegistration.model_validate_json(push_registration_bytes)
+    except PydanticValidationError:
+        raise InvalidEncryptedPushRegistrationError
+
+    if (
+        datetime_to_timestamp(timezone_now()) - push_registration.timestamp
+        > PUSH_REGISTRATION_LIVENESS_TIMEOUT
+    ):
+        raise RequestExpiredError
+
+    # If already registered, return the device_id.
+    # The query uses the unique index created by the
+    # 'unique_remote_push_device_push_account_id_token' constraint.
+    remote_push_device = RemotePushDevice.objects.filter(
+        token=push_registration.token, push_account_id=push_account_id
+    ).first()
+    if remote_push_device:
+        return remote_push_device.device_id
+
+    remote_push_device = RemotePushDevice.objects.create(
+        realm=realm,
+        remote_realm=remote_realm,
+        token=push_registration.token,
+        token_kind=push_registration.token_kind,
+        push_account_id=push_account_id,
+        ios_app_id=push_registration.ios_app_id,
+    )
+    return remote_push_device.device_id
+
+
+@typed_endpoint
+def register_remote_push_device_for_e2ee_push_notification(
+    request: HttpRequest,
+    server: RemoteZulipServer,
+    *,
+    realm_uuid: str,
+    push_account_id: Json[int],
+    encrypted_push_registration: str,
+    bouncer_public_key: str,
+) -> HttpResponse:
+    remote_realm = get_remote_realm_helper(request, server, realm_uuid)
+    if remote_realm is None:
+        raise MissingRemoteRealmError
+    else:
+        remote_realm.last_request_datetime = timezone_now()
+        remote_realm.save(update_fields=["last_request_datetime"])
+
+    device_id = do_register_remote_push_device(
+        bouncer_public_key,
+        encrypted_push_registration,
+        push_account_id,
+        remote_realm=remote_realm,
+    )
+
+    return json_success(request, {"device_id": device_id})
+
+
 @typed_endpoint
 def unregister_remote_push_device(
     request: HttpRequest,
@@ -491,9 +647,11 @@ def unregister_remote_push_device(
 
     update_remote_realm_last_request_datetime_helper(request, server, realm_uuid, user_uuid)
 
-    (num_deleted, ignored) = RemotePushDeviceToken.objects.filter(
-        user_identity.filter_q(), token=token, kind=token_kind, server=server
-    ).delete()
+    (num_deleted, ignored) = (
+        get_remote_push_device_token(token=token, kind=token_kind, server=server)
+        .filter(user_identity.filter_q())
+        .delete()
+    )
     if num_deleted == 0:
         raise JsonableError(err_("Token does not exist"))
 
@@ -525,7 +683,7 @@ def update_remote_realm_last_request_datetime_helper(
 ) -> None:
     if realm_uuid is not None:
         assert user_uuid is not None
-        remote_realm = get_remote_realm_helper(request, server, realm_uuid, user_uuid)
+        remote_realm = get_remote_realm_helper(request, server, realm_uuid)
         if remote_realm is not None:
             remote_realm.last_request_datetime = timezone_now()
             remote_realm.save(update_fields=["last_request_datetime"])
@@ -552,7 +710,10 @@ def delete_duplicate_registrations(
     assert len({registration.kind for registration in registrations}) == 1
     kind = registrations[0].kind
 
-    tokens_counter = Counter(device.token for device in registrations)
+    if kind == RemotePushDeviceToken.APNS:
+        tokens_counter = Counter(device.token.lower() for device in registrations)
+    else:
+        tokens_counter = Counter(device.token for device in registrations)
 
     tokens_to_deduplicate = []
     for key in tokens_counter:
@@ -626,11 +787,12 @@ def remote_server_send_test_notification(
 
     update_remote_realm_last_request_datetime_helper(request, server, realm_uuid, user_uuid)
 
-    try:
-        device = RemotePushDeviceToken.objects.get(
-            user_identity.filter_q(), token=token, kind=token_kind, server=server
-        )
-    except RemotePushDeviceToken.DoesNotExist:
+    device = (
+        get_remote_push_device_token(token=token, kind=token_kind, server=server)
+        .filter(user_identity.filter_q())
+        .first()
+    )
+    if device is None:
         raise InvalidRemotePushDeviceTokenError
 
     send_test_push_notification_directly_to_devices(
@@ -640,7 +802,9 @@ def remote_server_send_test_notification(
 
 
 def get_remote_realm_helper(
-    request: HttpRequest, server: RemoteZulipServer, realm_uuid: str, user_uuid: str
+    request: HttpRequest,
+    server: RemoteZulipServer,
+    realm_uuid: str,
 ) -> RemoteRealm | None:
     """
     Tries to fetch RemoteRealm for the given realm_uuid and server. Otherwise,
@@ -652,11 +816,10 @@ def get_remote_realm_helper(
         remote_realm = RemoteRealm.objects.get(uuid=realm_uuid)
     except RemoteRealm.DoesNotExist:
         logger.info(
-            "%s: Received request for unknown realm %s, server %s, user %s",
+            "%s: Received request for unknown realm %s, server %s",
             request.path,
             realm_uuid,
             server.id,
-            user_uuid,
         )
         return None
 
@@ -724,7 +887,7 @@ def remote_server_notify_push(
         assert isinstance(user_uuid, str), (
             "Servers new enough to send realm_uuid, should also have user_uuid"
         )
-        remote_realm = get_remote_realm_helper(request, server, realm_uuid, user_uuid)
+        remote_realm = get_remote_realm_helper(request, server, realm_uuid)
 
     push_status = get_push_status_for_remote_request(server, remote_realm)
     log_data = RequestNotes.get_notes(request).log_data
@@ -914,16 +1077,38 @@ def get_deleted_devices(
         kind=RemotePushDeviceToken.FCM,
         server=server,
     ).values_list("token", flat=True)
-    apple_devices_we_have = RemotePushDeviceToken.objects.filter(
-        user_identity.filter_q(),
-        token__in=apple_devices,
-        kind=RemotePushDeviceToken.APNS,
-        server=server,
-    ).values_list("token", flat=True)
+
+    # APNS tokens are case-insensitive -- but the remote server may
+    # not know that yet.  As such, we perform our local lookups
+    # case-insensitively, returning the exact case the remote server
+    # used, and also return all-but-one of any case duplicates that
+    # the remote server passed us.
+    canonical_case = {}
+    apns_token_to_remove = set()
+    for token in apple_devices:
+        if token.lower() not in canonical_case:
+            canonical_case[token.lower()] = token
+        elif canonical_case[token.lower()] == token:
+            # Be careful to skip if identical-case tokens somehow show up more than once
+            pass
+        else:
+            apns_token_to_remove.add(token)
+    apple_devices_we_have = (
+        RemotePushDeviceToken.objects.annotate(lower_token=Lower("token"))
+        .filter(
+            user_identity.filter_q(),
+            lower_token__in=canonical_case.keys(),
+            kind=RemotePushDeviceToken.APNS,
+            server=server,
+        )
+        .values_list("lower_token", flat=True)
+    )
+    for token_to_remove in set(canonical_case.keys()) - set(apple_devices_we_have):
+        apns_token_to_remove.add(canonical_case[token_to_remove])
 
     return DevicesToCleanUpDict(
-        android_devices=list(set(android_devices) - set(android_devices_we_have)),
-        apple_devices=list(set(apple_devices) - set(apple_devices_we_have)),
+        android_devices=sorted(set(android_devices) - set(android_devices_we_have)),
+        apple_devices=sorted(apns_token_to_remove),
     )
 
 
@@ -1617,3 +1802,64 @@ def remote_server_check_analytics(request: HttpRequest, server: RemoteZulipServe
         "last_realmauditlog_id": get_last_id_from_server(server, RemoteRealmAuditLog),
     }
     return json_success(request, data=result)
+
+
+class SendE2EEPushNotificationPayload(BaseModel):
+    realm_uuid: str
+    device_id_to_encrypted_data: dict[str, str]
+
+
+@typed_endpoint
+def remote_server_send_e2ee_push_notification(
+    request: HttpRequest,
+    server: RemoteZulipServer,
+    *,
+    payload: JsonBodyPayload[SendE2EEPushNotificationPayload],
+) -> HttpResponse:
+    from corporate.lib.stripe import get_push_status_for_remote_request
+
+    remote_realm = get_remote_realm_helper(request, server, payload.realm_uuid)
+    if remote_realm is None:
+        raise MissingRemoteRealmError
+    else:
+        remote_realm.last_request_datetime = timezone_now()
+        remote_realm.save(update_fields=["last_request_datetime"])
+
+    push_status = get_push_status_for_remote_request(server, remote_realm)
+    log_data = RequestNotes.get_notes(request).log_data
+    assert log_data is not None
+    log_data["extra"] = f"[can_push={push_status.can_push}/{push_status.message}]"
+    if not push_status.can_push:
+        reason = push_status.message
+        raise PushNotificationsDisallowedError(reason=reason)
+
+    device_id_to_encrypted_data = payload.device_id_to_encrypted_data
+
+    do_increment_logging_stat(
+        remote_realm,
+        COUNT_STATS["mobile_pushes_received::day"],
+        None,
+        timezone_now(),
+        increment=len(device_id_to_encrypted_data),
+    )
+
+    response_data = send_e2ee_push_notifications(
+        device_id_to_encrypted_data, remote_realm=remote_realm
+    )
+
+    do_increment_logging_stat(
+        remote_realm,
+        COUNT_STATS["mobile_pushes_forwarded::day"],
+        None,
+        timezone_now(),
+        increment=response_data["apple_successfully_sent_count"]
+        + response_data["android_successfully_sent_count"],
+    )
+    realm_push_status_dict: RealmPushStatusDict = {
+        "can_push": push_status.can_push,
+        "expected_end_timestamp": push_status.expected_end_timestamp,
+    }
+
+    return json_success(
+        request, data={**response_data, "realm_push_status": realm_push_status_dict}
+    )

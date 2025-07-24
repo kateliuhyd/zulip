@@ -13,6 +13,7 @@ import render_subscribe_to_more_streams from "../templates/subscribe_to_more_str
 
 import * as blueslip from "./blueslip.ts";
 import * as browser_history from "./browser_history.ts";
+import * as compose_actions from "./compose_actions.ts";
 import type {Filter} from "./filter.ts";
 import * as hash_util from "./hash_util.ts";
 import {$t} from "./i18n.ts";
@@ -190,6 +191,12 @@ export let update_count_in_dom = (
         $subscription_block.removeClass("has-only-muted-unreads");
         $subscription_block.removeClass("stream-with-count");
     }
+
+    toggle_hide_unread_counts(
+        $subscription_block,
+        stream_counts.stream_is_muted,
+        stream_counts.unmuted_count,
+    );
 };
 
 export function rewire_update_count_in_dom(value: typeof update_count_in_dom): void {
@@ -409,10 +416,7 @@ export function zoom_in_topics(options: {stream_id: number | undefined}): void {
 
     $("#streams_list").expectOne().removeClass("zoom-out").addClass("zoom-in");
 
-    // Hide stream list titles and pinned stream splitter
-    $(".stream-filters-label").each(function () {
-        $(this).hide();
-    });
+    // Hide pinned stream splitter
     $(".streams_subheader").each(function () {
         $(this).hide();
     });
@@ -422,28 +426,25 @@ export function zoom_in_topics(options: {stream_id: number | undefined}): void {
         const stream_id = options.stream_id;
 
         if (stream_id_for_elt($elt) === stream_id) {
-            $elt.show();
+            $elt.toggleClass("hide", false);
             // Add search box for topics list.
             $elt.children("div.bottom_left_row").append($(render_filter_topics()));
-            $("#left-sidebar-filter-topic-input").trigger("focus");
+            $("#topic_filter_query").trigger("focus");
             topic_list.setup_topic_search_typeahead();
         } else {
-            $elt.hide();
+            $elt.toggleClass("hide", true);
         }
     });
 }
 
 export function zoom_out_topics(): void {
-    // Show stream list titles and pinned stream splitter
-    $(".stream-filters-label").each(function () {
-        $(this).show();
-    });
+    // Show pinned stream splitter
     $(".streams_subheader").each(function () {
         $(this).show();
     });
 
     $("#streams_list").expectOne().removeClass("zoom-in").addClass("zoom-out");
-    $("#stream_filters li.narrow-filter").show();
+    $("#stream_filters li.narrow-filter").toggleClass("hide", false);
     // Remove search box for topics list from DOM.
     $(".filter-topics").remove();
 }
@@ -466,13 +467,7 @@ function build_stream_sidebar_li(sub: StreamSubscription): JQuery {
     const name = sub.name;
     const is_muted = stream_data.is_muted(sub.stream_id);
     const can_post_messages = stream_data.can_post_messages_in_stream(sub);
-    let url = hash_util.channel_url_by_user_setting(sub.stream_id);
-    if (
-        web_channel_default_view_values.list_of_topics.code ===
-        user_settings.web_channel_default_view
-    ) {
-        url = hash_util.by_channel_topic_list_url(sub.stream_id);
-    }
+    const url = hash_util.channel_url_by_user_setting(sub.stream_id);
     const args = {
         name,
         id: sub.stream_id,
@@ -482,8 +477,8 @@ function build_stream_sidebar_li(sub: StreamSubscription): JQuery {
         is_web_public: sub.is_web_public,
         color: sub.color,
         pin_to_top: sub.pin_to_top,
-        hide_unread_count: settings_data.should_mask_unread_count(is_muted),
         can_post_messages,
+        is_empty_topic_only_channel: stream_data.is_empty_topic_only_channel(sub.stream_id),
     };
     const $list_item = $(render_stream_sidebar_row(args));
     return $list_item;
@@ -646,18 +641,32 @@ export function update_dom_with_unread_counts(counts: FullUnreadCountsData): voi
     }
 }
 
+function toggle_hide_unread_counts(
+    $subscription_block: JQuery,
+    sub_muted: boolean,
+    unmuted_unread_counts: number,
+): void {
+    const hide_count = settings_data.should_mask_unread_count(sub_muted, unmuted_unread_counts);
+
+    $subscription_block.toggleClass("hide_unread_counts", hide_count);
+}
+
 export function update_dom_unread_counts_visibility(): void {
+    // TODO: It's not obviously why this function exists; can't we
+    // just do a full left sidebar rebuild?
     for (const stream of stream_sidebar.rows.values()) {
         const $subscription_block = stream.get_li().find(".subscription_block");
 
         const is_muted = stream_data.is_muted(stream.sub.stream_id);
-        const hide_count = settings_data.should_mask_unread_count(is_muted);
-
-        if (hide_count) {
-            $subscription_block.addClass("hide_unread_counts");
-        } else {
-            $subscription_block.removeClass("hide_unread_counts");
-        }
+        // Technically, we just need to know if there's at least one
+        // unmuted unread here, so this could be optimized by using a
+        // faster `unread.ts` API optimized to compute just the set of
+        // channels with at least one unmuted unread.
+        //
+        // That optimization is inessential as long as this function
+        // is only called when changing a global personal setting.
+        const stream_counts = unread.unread_count_info_for_stream(stream.sub.stream_id);
+        toggle_hide_unread_counts($subscription_block, is_muted, stream_counts.unmuted_count);
     }
 }
 
@@ -835,10 +844,10 @@ export function initialize_stream_cursor(): void {
 }
 
 export function initialize({
-    on_stream_click,
+    show_channel_feed,
     update_inbox_channel_view,
 }: {
-    on_stream_click: (stream_id: number, trigger: string) => void;
+    show_channel_feed: (stream_id: number, trigger: string) => void;
     update_inbox_channel_view: (channel_id: number) => void;
 }): void {
     update_inbox_channel_view_callback = update_inbox_channel_view;
@@ -850,7 +859,7 @@ export function initialize({
     update_subscribe_to_more_streams_link();
     initialize_stream_cursor();
     initialize_tippy_tooltips();
-    set_event_handlers({on_stream_click});
+    set_event_handlers({show_channel_feed});
 
     $("#stream_filters").on("click", ".show-more-topics", (e) => {
         zoom_in();
@@ -907,101 +916,139 @@ export function initialize_tippy_tooltips(): void {
     });
 }
 
+function on_sidebar_channel_click(
+    stream_id: number,
+    // Null is used when this is called via `Enter`, because the
+    // keyboard abstraction we're using doesn't need to pass on the event.
+    e: JQuery.ClickEvent | null,
+    show_channel_feed: (stream_id: number, trigger: string) => void,
+): void {
+    clear_and_hide_search();
+    if (e !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    const current_narrow_stream_id = narrow_state.stream_id();
+    const current_topic = narrow_state.topic();
+
+    if (stream_data.is_empty_topic_only_channel(stream_id)) {
+        // If the channel doesn't support topics, take you
+        // directly to general chat regardless of settings.
+        const empty_topic_url = hash_util.by_channel_topic_permalink(stream_id, "");
+        browser_history.go_to_location(empty_topic_url);
+        return;
+    }
+
+    if (
+        user_settings.web_channel_default_view ===
+        web_channel_default_view_values.list_of_topics.code
+    ) {
+        browser_history.go_to_location(hash_util.by_channel_topic_list_url(stream_id));
+        return;
+    }
+
+    if (current_narrow_stream_id === stream_id && current_topic !== undefined) {
+        const channel_feed_url = hash_util.channel_url_by_user_setting(stream_id);
+        browser_history.go_to_location(channel_feed_url);
+        return;
+    }
+
+    if (
+        user_settings.web_channel_default_view === web_channel_default_view_values.channel_feed.code
+    ) {
+        show_channel_feed(stream_id, "sidebar");
+        return;
+    }
+
+    let topics = stream_topic_history.get_recent_topic_names(stream_id);
+
+    const navigate_to_stream = (): void => {
+        const topic_list_info = topic_list_data.get_list_info(
+            stream_id,
+            false,
+            (topic_names: string[]) => topic_names,
+        );
+        // This initial value handles both the
+        // top_topic_in_channel mode as well as the
+        // top_unread_topic_in_channel fallback when there are no
+        // (unmuted) unreads in the channel.
+        let topic_item = topic_list_info.items[0];
+
+        if (
+            user_settings.web_channel_default_view ===
+            web_channel_default_view_values.top_unread_topic_in_channel.code
+        ) {
+            for (const topic_list_item of topic_list_info.items) {
+                if (
+                    unread.topic_has_any_unread(stream_id, topic_list_item.topic_name) &&
+                    !user_topics.is_topic_muted(stream_id, topic_list_item.topic_name)
+                ) {
+                    topic_item = topic_list_item;
+                    break;
+                }
+            }
+        }
+
+        if (topic_item !== undefined) {
+            const destination_url = hash_util.by_channel_topic_permalink(
+                stream_id,
+                topic_item.topic_name,
+            );
+            browser_history.go_to_location(destination_url);
+        } else {
+            show_channel_feed(stream_id, "sidebar");
+            return;
+        }
+    };
+
+    if (topics.length === 0) {
+        stream_topic_history_util.get_server_history(stream_id, () => {
+            topics = stream_topic_history.get_recent_topic_names(stream_id);
+            if (topics.length === 0) {
+                show_channel_feed(stream_id, "sidebar");
+                return;
+            }
+            navigate_to_stream();
+            return;
+        });
+    } else {
+        navigate_to_stream();
+        return;
+    }
+}
+
 export function set_event_handlers({
-    on_stream_click,
+    show_channel_feed,
 }: {
-    on_stream_click: (stream_id: number, trigger: string) => void;
+    show_channel_feed: (stream_id: number, trigger: string) => void;
 }): void {
-    $("#stream_filters").on("click", "li .subscription_block .stream-name", (e) => {
+    $("#stream_filters").on("click", "li .subscription_block", (e) => {
+        // Left sidebar channel links have an `href` so that the
+        // browser will preview the URL and you can middle-click it.
+        //
+        // But we want to control what the click does to follow the
+        // user's default left sidebar click action, rather than
+        // taking you to the channel feed.
         if (e.metaKey || e.ctrlKey || e.shiftKey) {
             return;
         }
 
-        clear_and_hide_search();
-        e.preventDefault();
-        e.stopPropagation();
-
         const stream_id = stream_id_for_elt($(e.target).parents("li.narrow-filter"));
-        const current_narrow_stream_id = narrow_state.stream_id();
-        const current_topic = narrow_state.topic();
+        on_sidebar_channel_click(stream_id, e, show_channel_feed);
+    });
 
-        if (
-            user_settings.web_channel_default_view ===
-            web_channel_default_view_values.list_of_topics.code
-        ) {
-            browser_history.go_to_location(hash_util.by_channel_topic_list_url(stream_id));
-            return;
-        }
-
-        if (current_narrow_stream_id === stream_id && current_topic !== undefined) {
-            const channel_feed_url = hash_util.channel_url_by_user_setting(stream_id);
-            browser_history.go_to_location(channel_feed_url);
-            return;
-        }
-
-        if (
-            user_settings.web_channel_default_view ===
-            web_channel_default_view_values.channel_feed.code
-        ) {
-            on_stream_click(stream_id, "sidebar");
-            return;
-        }
-
-        let topics = stream_topic_history.get_recent_topic_names(stream_id);
-
-        const navigate_to_stream = (): void => {
-            const topic_list_info = topic_list_data.get_list_info(
-                stream_id,
-                false,
-                (topic_names: string[]) => topic_names,
-            );
-            // This initial value handles both the
-            // top_topic_in_channel mode as well as the
-            // top_unread_topic_in_channel fallback when there are no
-            // (unmuted) unreads in the channel.
-            let topic_item = topic_list_info.items[0];
-
-            if (
-                user_settings.web_channel_default_view ===
-                web_channel_default_view_values.top_unread_topic_in_channel.code
-            ) {
-                for (const topic_list_item of topic_list_info.items) {
-                    if (
-                        unread.topic_has_any_unread(stream_id, topic_list_item.topic_name) &&
-                        !user_topics.is_topic_muted(stream_id, topic_list_item.topic_name)
-                    ) {
-                        topic_item = topic_list_item;
-                        break;
-                    }
-                }
-            }
-
-            if (topic_item !== undefined) {
-                const destination_url = hash_util.by_channel_topic_permalink(
-                    stream_id,
-                    topic_item.topic_name,
-                );
-                browser_history.go_to_location(destination_url);
-            } else {
-                on_stream_click(stream_id, "sidebar");
-                return;
-            }
-        };
-
-        if (topics.length === 0) {
-            stream_topic_history_util.get_server_history(stream_id, () => {
-                topics = stream_topic_history.get_recent_topic_names(stream_id);
-                if (topics.length === 0) {
-                    on_stream_click(stream_id, "sidebar");
-                    return;
-                }
-                navigate_to_stream();
-                return;
-            });
-        } else {
-            navigate_to_stream();
-            return;
-        }
+    $("#stream_filters").on("click", ".channel-new-topic-button", function (this: HTMLElement, e) {
+        e.stopPropagation();
+        e.preventDefault();
+        const stream_id = Number.parseInt(this.dataset.streamId!, 10);
+        compose_actions.start({
+            message_type: "stream",
+            stream_id,
+            topic: "",
+            trigger: "clear topic button",
+            keep_composebox_empty: true,
+        });
     });
 
     $("#streams_header")
@@ -1010,7 +1057,7 @@ export function set_event_handlers({
             e.preventDefault();
             if (
                 e.target.id === "streams_inline_icon" ||
-                $(e.target).parent().hasClass("input-button")
+                $(e.target).parent().hasClass("input-close-filter-button")
             ) {
                 return;
             }
@@ -1053,8 +1100,7 @@ export function set_event_handlers({
             return;
         }
 
-        clear_and_hide_search();
-        on_stream_click(stream_id, "sidebar enter key");
+        on_sidebar_channel_click(stream_id, null, show_channel_feed);
     }
 
     keydown_util.handle({

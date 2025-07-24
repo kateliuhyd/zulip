@@ -347,6 +347,21 @@ test("basics", () => {
     assert.ok(filter.can_show_next_unread_dm_conversation_button());
     assert.ok(!filter.has_exactly_channel_topic_operators());
 
+    terms = [{operator: "is", operand: "dm", negated: true}];
+    filter = new Filter(terms);
+    assert.ok(!filter.contains_only_private_messages());
+    assert.ok(filter.can_mark_messages_read());
+    assert.ok(filter.contains_no_partial_conversations());
+    assert.ok(!filter.has_operator("search"));
+    assert.ok(filter.can_apply_locally());
+    assert.ok(!filter.is_personal_filter());
+    assert.ok(!filter.is_conversation_view());
+    assert.ok(!filter.is_channel_view());
+    assert.ok(filter.may_contain_multiple_conversations());
+    assert.ok(!filter.can_show_next_unread_topic_conversation_button());
+    assert.ok(!filter.can_show_next_unread_dm_conversation_button());
+    assert.ok(!filter.has_exactly_channel_topic_operators());
+
     // "is:private" was renamed to "is:dm"
     terms = [{operator: "is", operand: "private"}];
     filter = new Filter(terms);
@@ -2696,6 +2711,14 @@ test("navbar_helpers", ({override}) => {
     };
 
     test_get_title(channel_topic_search_term_test_case);
+
+    page_params.is_spectator = true;
+    const channels_public_search_test_case_for_spectator = {
+        terms: channels_public,
+        title: "translated: Messages in all public channels that you can view",
+    };
+    test_get_title(channels_public_search_test_case_for_spectator);
+    page_params.is_spectator = false;
 
     override(realm, "realm_enable_guest_user_indicator", false);
     const guest_user_test_cases_without_indicator = [

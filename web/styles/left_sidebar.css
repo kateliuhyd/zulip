@@ -14,6 +14,22 @@
     text-overflow: ellipsis;
 }
 
+#left-sidebar .input-element-wrapper {
+    /* We normalize this based on Firefox's 31px-tall input,
+       raising Chrome's (28px) and Safari's (30px) to all
+       match, so that `top:` and other offset values are
+       identical relative to input elements. This value
+       is taken up by the grid-template definition in
+       inputs.css. */
+    --input-element-row-height: 1.9375em;
+
+    .input-element {
+        /* And to keep the visual space of the input identical,
+           we stretch to the height of the grid row above. */
+        align-self: stretch;
+    }
+}
+
 #left-sidebar .unread_count {
     user-select: none;
 }
@@ -172,16 +188,6 @@
         }
     }
 
-    .has-unmuted-unreads.hide_unread_counts {
-        .masked_unread_count {
-            display: none;
-        }
-
-        .unread_count {
-            display: inline;
-        }
-    }
-
     .toggle_stream_mute {
         margin-right: 3px;
         opacity: 0.5;
@@ -197,18 +203,6 @@
         &:hover {
             text-decoration: none;
         }
-    }
-}
-
-#left_sidebar_scroll_container {
-    outline: none;
-    overflow: hidden auto;
-    position: relative;
-    z-index: 0;
-    width: 100%;
-
-    .direct-messages-container {
-        margin-left: 0;
     }
 }
 
@@ -1069,11 +1063,27 @@ li.top_left_scheduled_messages {
             var(--left-sidebar-toggle-width-offset) -
                 var(--input-icon-starting-offset)
         )
-        minmax(0, 1fr) var(--left-sidebar-vdots-width);
+        minmax(0, 1fr) 0;
 
     .filter-input,
     .filter-topics {
         grid-area: filter-input;
+    }
+
+    /* Keep topic filters to a single line, and show
+       an ellipsis when the input loses focus. */
+    #left-sidebar-filter-topic-input {
+        flex-wrap: nowrap;
+
+        .pill {
+            flex-shrink: 0;
+        }
+
+        .input {
+            white-space: nowrap;
+            overflow-x: hidden;
+            text-overflow: ellipsis;
+        }
     }
 }
 
@@ -1363,31 +1373,8 @@ li.top_left_scheduled_messages {
     }
 }
 
-.topic-list-filter {
-    grid-area: filter-box;
-    padding-right: var(--line-height-sidebar-row-prominent);
-    box-shadow: none;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    gap: 0.125em; /* 2px at 16px em */
-    background-color: var(--color-background-active-narrow-filter);
-    font-weight: 400;
-
-    .input:empty::before {
-        color: var(--color-text-placeholder);
-        content: attr(data-placeholder);
-    }
-
-    .input {
-        flex-grow: 1;
-        min-width: 0;
-    }
-}
-
-#clear_search_topic_button {
-    visibility: hidden;
-    height: 2em; /* 32px at 16px/1em */
+.filter-topics {
+    font-weight: initial;
 }
 
 .searching-for-more-topics img {
@@ -1937,6 +1924,10 @@ li.topic-list-item {
 }
 
 .zoom-in {
+    .narrow-filter.hide {
+        display: none;
+    }
+
     .narrow-filter > .bottom_left_row {
         position: sticky;
         /* We subtract a quarter pixel of space to correct
