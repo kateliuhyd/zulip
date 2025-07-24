@@ -11,7 +11,6 @@ from zerver.lib.cache import (
 from zerver.models import AlertWord, Realm, UserProfile
 from zerver.models.alert_words import flush_realm_alert_words
 
-
 @cache_with_key(lambda realm: realm_alert_words_cache_key(realm.id), timeout=3600 * 24)
 def alert_words_in_realm(realm: Realm) -> dict[int, list[str]]:
     user_ids_and_words = AlertWord.objects.filter(
@@ -58,11 +57,11 @@ def user_alert_words_with_deactivated(user_profile: UserProfile) -> list[AlertWo
 def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) -> list[str]:
     existing_alert_words = user_alert_words_with_deactivated(user_profile)
     
-    # case-insensitive distinct, new alert words
     existing_words_map = {
         alert_word.word.lower(): alert_word for alert_word in existing_alert_words
     }
     # Keeping the case, use a dictionary to get the set of
+    # case-insensitive distinct, new alert words
     word_dict: dict[str, str] = {}
     for word in new_words:
         lower_word = word.lower()
@@ -90,8 +89,6 @@ def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) ->
         .values_list("word", flat=True)
     )
 
-
-
 @transaction.atomic(savepoint=False)
 def remove_user_alert_words(user_profile: UserProfile, delete_words: Iterable[str]) -> list[str]:
     # TODO: Ideally, this would be a bulk query, but Django doesn't have a `__iexact`.
@@ -101,4 +98,7 @@ def remove_user_alert_words(user_profile: UserProfile, delete_words: Iterable[st
         # Mark the alert word as deactivated instead of deleting it.
         # This is to retain historical data for more accurate highlighting logic
         AlertWord.objects.filter(user_profile=user_profile, word__iexact=delete_word).update(deactivated=True)
+    
+    # Important: clear cache so that realm-level alert_words are updated
+    flush_realm_alert_words(user_profile.realm_id)
     return user_alert_words(user_profile)
