@@ -416,10 +416,7 @@ export function zoom_in_topics(options: {stream_id: number | undefined}): void {
 
     $("#streams_list").expectOne().removeClass("zoom-out").addClass("zoom-in");
 
-    // Hide stream list titles and pinned stream splitter
-    $(".stream-filters-label").each(function () {
-        $(this).hide();
-    });
+    // Hide pinned stream splitter
     $(".streams_subheader").each(function () {
         $(this).hide();
     });
@@ -429,28 +426,25 @@ export function zoom_in_topics(options: {stream_id: number | undefined}): void {
         const stream_id = options.stream_id;
 
         if (stream_id_for_elt($elt) === stream_id) {
-            $elt.show();
+            $elt.toggleClass("hide", false);
             // Add search box for topics list.
             $elt.children("div.bottom_left_row").append($(render_filter_topics()));
             $("#topic_filter_query").trigger("focus");
             topic_list.setup_topic_search_typeahead();
         } else {
-            $elt.hide();
+            $elt.toggleClass("hide", true);
         }
     });
 }
 
 export function zoom_out_topics(): void {
-    // Show stream list titles and pinned stream splitter
-    $(".stream-filters-label").each(function () {
-        $(this).show();
-    });
+    // Show pinned stream splitter
     $(".streams_subheader").each(function () {
         $(this).show();
     });
 
     $("#streams_list").expectOne().removeClass("zoom-in").addClass("zoom-out");
-    $("#stream_filters li.narrow-filter").show();
+    $("#stream_filters li.narrow-filter").toggleClass("hide", false);
     // Remove search box for topics list from DOM.
     $(".filter-topics").remove();
 }
@@ -1063,7 +1057,7 @@ export function set_event_handlers({
             e.preventDefault();
             if (
                 e.target.id === "streams_inline_icon" ||
-                $(e.target).parent().hasClass("input-button")
+                $(e.target).parent().hasClass("input-close-filter-button")
             ) {
                 return;
             }

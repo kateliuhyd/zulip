@@ -659,23 +659,12 @@
     /* Banner grid layout variables */
     --banner-horizontal-padding: 0.8125em; /* 13px at 16px/1em */
     --banner-vertical-padding: 0.3125em; /* 5px at 16px/1em */
-    --banner-grid-template-areas-lg: ". . . . . . banner-close-button banner-close-button"
-        ". . banner-label . banner-action-buttons . banner-close-button banner-close-button"
-        ". . . . . . banner-close-button banner-close-button";
-    --banner-grid-template-columns-lg: var(--banner-horizontal-padding) 0 auto
-        minmax(0, 1fr) auto 0 minmax(0, auto) var(--banner-horizontal-padding);
-    --banner-grid-template-rows-lg: 0.3125em auto 0.3125em; /* 5px at 16px/1em */
-    --banner-grid-template-areas-md: ". . . . banner-close-button banner-close-button"
-        ". . banner-label banner-label banner-close-button banner-close-button"
-        ". banner-action-buttons banner-action-buttons banner-action-buttons banner-close-button banner-close-button"
-        ". . . . banner-close-button banner-close-button";
-    --banner-grid-template-columns-md: var(--banner-horizontal-padding) 0
-        minmax(auto, 1fr) 0 minmax(0, auto) var(--banner-horizontal-padding);
-    --banner-grid-template-rows-md: 0.3125em auto auto 0.3125em; /* 5px at 16px/1em */
-    --banner-grid-template-areas-sm: ". . . . banner-close-button banner-close-button"
-        ". . banner-label banner-label banner-close-button banner-close-button"
-        ". banner-action-buttons banner-action-buttons banner-action-buttons banner-close-button banner-close-button"
-        ". . . . banner-close-button banner-close-button";
+    --banner-grid-template-areas: " . . banner-close-button banner-close-button"
+        ". banner-content banner-close-button banner-close-button"
+        ". . banner-close-button banner-close-button";
+    --banner-grid-template-columns: var(--banner-horizontal-padding)
+        minmax(0, 1fr) minmax(0, auto) var(--banner-horizontal-padding);
+    --banner-grid-template-rows: 0.3125em auto 0.3125em; /* 5px at 16px/1em */
 
     /* Popup banner related variables */
     --popup-banner-translate-y-distance: 100px;
@@ -1928,6 +1917,7 @@
         hsl(0deg 0% 20%)
     );
     --color-icons-inbox: light-dark(hsl(0deg 0% 0%), hsl(0deg 0% 100%));
+    --color-folder-header: light-dark(hsl(216deg 43% 20%), hsl(216deg 50% 75%));
 
     /* Navbar dropdown menu constants - Values from Figma design */
     --box-shadow-popover-menu:
@@ -2640,15 +2630,15 @@
         hsl(0deg 0% 100%),
         hsl(225deg 6% 7%)
     );
-    --color-border-input: light-dark(
+    --color-outline-input: light-dark(
         color-mix(in oklch, hsl(229deg 22% 10%) 30%, transparent),
         color-mix(in oklch, hsl(0deg 0% 100%) 20%, transparent)
     );
-    --color-border-input-hover: light-dark(
+    --color-outline-input-hover: light-dark(
         color-mix(in oklch, hsl(229deg 22% 10%) 60%, transparent),
         color-mix(in oklch, hsl(0deg 0% 100%) 40%, transparent)
     );
-    --color-border-input-focus: light-dark(
+    --color-outline-input-focus: light-dark(
         color-mix(in oklch, hsl(229deg 22% 10%) 80%, transparent),
         color-mix(in oklch, hsl(0deg 0% 100%) 50%, transparent)
     );

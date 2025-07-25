@@ -287,6 +287,8 @@ def update_stream_backend(
     *,
     can_add_subscribers_group: Json[GroupSettingChangeRequest] | None = None,
     can_administer_channel_group: Json[GroupSettingChangeRequest] | None = None,
+    can_delete_any_message_group: Json[GroupSettingChangeRequest] | None = None,
+    can_delete_own_message_group: Json[GroupSettingChangeRequest] | None = None,
     can_move_messages_out_of_channel_group: Json[GroupSettingChangeRequest] | None = None,
     can_move_messages_within_channel_group: Json[GroupSettingChangeRequest] | None = None,
     can_remove_subscribers_group: Json[GroupSettingChangeRequest] | None = None,
@@ -442,6 +444,11 @@ def update_stream_backend(
     if is_archived is not None and not is_archived:
         do_unarchive_stream(stream, stream.name, acting_user=None)
 
+    if (
+        can_delete_any_message_group is not None or can_delete_own_message_group is not None
+    ) and not user_profile.can_set_delete_message_policy():
+        raise JsonableError(_("Insufficient permission"))
+
     if description is not None:
         do_change_stream_description(stream, description, acting_user=user_profile)
     if new_name is not None:
@@ -496,7 +503,7 @@ def update_stream_backend(
             with transaction.atomic(durable=True):
                 user_group_api_value_for_setting = access_user_group_api_value_for_setting(
                     new_setting_value,
-                    user_profile,
+                    user_profile.realm,
                     setting_name=setting_name,
                     permission_configuration=permission_configuration,
                 )
@@ -666,6 +673,14 @@ def access_requested_group_permissions(
                 setting_name=setting_name,
                 permission_configuration=permission_configuration,
             )
+            if (
+                setting_name in ["can_delete_any_message_group", "can_delete_own_message_group"]
+                and group_settings_map[setting_name].id
+                != system_groups_name_dict[SystemGroups.NOBODY].id
+                and not user_profile.can_set_delete_message_policy()
+            ):
+                raise JsonableError(_("Insufficient permission"))
+
             if not isinstance(setting_value, int):
                 anonymous_group_membership[group_settings_map[setting_name].id] = setting_value
         else:
@@ -691,6 +706,8 @@ def add_subscriptions_backend(
     announce: Json[bool] = False,
     authorization_errors_fatal: Json[bool] = True,
     can_add_subscribers_group: Json[int | UserGroupMembersData] | None = None,
+    can_delete_any_message_group: Json[int | UserGroupMembersData] | None = None,
+    can_delete_own_message_group: Json[int | UserGroupMembersData] | None = None,
     can_administer_channel_group: Json[int | UserGroupMembersData] | None = None,
     can_move_messages_out_of_channel_group: Json[int | UserGroupMembersData] | None = None,
     can_move_messages_within_channel_group: Json[int | UserGroupMembersData] | None = None,
@@ -764,6 +781,12 @@ def add_subscriptions_backend(
         ]
         stream_dict_copy["can_administer_channel_group"] = group_settings_map[
             "can_administer_channel_group"
+        ]
+        stream_dict_copy["can_delete_any_message_group"] = group_settings_map[
+            "can_delete_any_message_group"
+        ]
+        stream_dict_copy["can_delete_own_message_group"] = group_settings_map[
+            "can_delete_own_message_group"
         ]
         stream_dict_copy["can_move_messages_out_of_channel_group"] = group_settings_map[
             "can_move_messages_out_of_channel_group"
@@ -952,6 +975,11 @@ def send_messages_for_new_subscribers(
                 else:
                     content = _("{user_name} created a new channel {new_channels}.")
                 topic_name = _("new channels")
+                if (
+                    new_stream_announcements_stream.topics_policy
+                    == StreamTopicsPolicyEnum.empty_topic_only.value
+                ):
+                    topic_name = ""
 
             content = content.format(
                 user_name=silent_mention_syntax_for_user(user_profile),

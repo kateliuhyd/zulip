@@ -1,7 +1,8 @@
 from typing import Literal
 
 from django.db import models
-from django.db.models import CASCADE, UniqueConstraint
+from django.db.models import CASCADE, F, Q, UniqueConstraint
+from django.db.models.functions import Lower
 
 from zerver.lib.exceptions import (
     InvalidBouncerPublicKeyError,
@@ -46,7 +47,22 @@ class PushDeviceToken(AbstractPushDeviceToken):
     user = models.ForeignKey(UserProfile, db_index=True, on_delete=CASCADE)
 
     class Meta:
-        unique_together = ("user", "kind", "token")
+        constraints = [
+            models.UniqueConstraint(
+                "user_id",
+                "kind",
+                Lower(F("token")),
+                name="zerver_pushdevicetoken_apns_user_kind_token",
+                condition=Q(kind=AbstractPushDeviceToken.APNS),
+            ),
+            models.UniqueConstraint(
+                "user_id",
+                "kind",
+                "token",
+                name="zerver_pushdevicetoken_fcm_user_kind_token",
+                condition=Q(kind=AbstractPushDeviceToken.FCM),
+            ),
+        ]
 
 
 class AbstractPushDevice(models.Model):
@@ -106,6 +122,15 @@ class PushDevice(AbstractPushDevice):
                 # `register_push_device`, and `handle_register_push_device_to_bouncer`.
                 fields=["user", "push_account_id"],
                 name="unique_push_device_user_push_account_id",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                # Used in 'send_push_notifications' function,
+                # in 'zerver/lib/push_notifications'.
+                fields=["user", "bouncer_device_id"],
+                condition=Q(bouncer_device_id__isnull=False),
+                name="zerver_pushdevice_user_bouncer_device_id_idx",
             ),
         ]
 

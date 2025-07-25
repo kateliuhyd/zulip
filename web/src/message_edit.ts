@@ -3,7 +3,7 @@ import $ from "jquery";
 import _ from "lodash";
 import assert from "minimalistic-assert";
 import * as tippy from "tippy.js";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import * as resolved_topic from "../shared/src/resolved_topic.ts";
 import render_wildcard_mention_not_allowed_error from "../templates/compose_banner/wildcard_mention_not_allowed_error.hbs";
@@ -243,6 +243,21 @@ export function get_deletability(message: Message): boolean {
         return true;
     }
 
+    if (message.type === "stream") {
+        const stream = stream_data.get_sub_by_id(message.stream_id);
+        assert(stream !== undefined);
+
+        const can_delete_any_message_in_channel =
+            settings_data.user_has_permission_for_group_setting(
+                stream.can_delete_any_message_group,
+                "can_delete_any_message_group",
+                "stream",
+            );
+        if (can_delete_any_message_in_channel) {
+            return true;
+        }
+    }
+
     if (!message.sent_by_me && !is_message_sent_by_my_bot(message)) {
         return false;
     }
@@ -250,7 +265,22 @@ export function get_deletability(message: Message): boolean {
         return false;
     }
     if (!settings_data.user_can_delete_own_message()) {
-        return false;
+        if (message.type !== "stream") {
+            return false;
+        }
+
+        const stream = stream_data.get_sub_by_id(message.stream_id);
+        assert(stream !== undefined);
+
+        const can_delete_own_message_in_channel =
+            settings_data.user_has_permission_for_group_setting(
+                stream.can_delete_own_message_group,
+                "can_delete_own_message_group",
+                "stream",
+            );
+        if (!can_delete_own_message_in_channel) {
+            return false;
+        }
     }
 
     if (realm.realm_message_content_delete_limit_seconds === null) {
@@ -1704,7 +1734,7 @@ export function move_topic_containing_message_to_stream(
     }
     if (currently_topic_editing_message_ids.includes(message_id)) {
         ui_report.client_error(
-            $t_html({defaultMessage: "A Topic Move already in progress."}),
+            $t_html({defaultMessage: "A topic move is already in progress."}),
             $("#move_topic_modal #dialog_error"),
         );
         return;

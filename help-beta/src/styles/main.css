@@ -1,13 +1,18 @@
 :root {
-    /* Each of the following heading font sizes has been decreased
-       by a factor of 1. --sl-text-h1 used to be equal to
-       var(--sl-text-5xl), but now it is equal to var(--sl-text-4xl). */
-    --sl-text-h1: var(--sl-text-4xl);
-    --sl-text-h2: var(--sl-text-3xl);
-    --sl-text-h3: var(--sl-text-2xl);
-    --sl-text-h4: var(--sl-text-xl);
+    /* Starlight base style headings are huge and distract from reading the text.
+       This is OK for some sites, but we are sparing with text and really want to
+       encourage users to read it. */
+    --sl-text-h1: 2rem;
+    --sl-text-h2: 1.4rem;
+    --sl-text-h3: 1.2rem;
+    --sl-text-h4: 1rem;
+    --sl-text-h5: 1rem;
+
     /* Changed from 1.2 to 1 */
     --sl-line-height-headings: 1;
+
+    /* Changed from 1.75 to make text easier to read. */
+    --sl-line-height: 1.5;
 }
 
 .non-clickable-sidebar-heading {
@@ -26,6 +31,30 @@
    the padding looked too big after removing the content panel border. */
 .content-panel {
     padding: 1rem var(--sl-content-pad-x);
+}
+
+.zulip-unplugin-icon {
+    /* Make sure the icon does not occupy it's own row. */
+    display: inline;
+    vertical-align: text-bottom;
+
+    /* unplugin-icons sets height and width by itself.
+       It was setting the height to 1024 and 960 for some
+       icons. It is better to set the height explicitly. */
+    height: 1em;
+    width: 1em;
+
+    /* Some css rules in starlight insert these margins to tags
+       that fit certain criteria, e.g. if it's a first child of
+       an li item and similar cases, and the icon disturbs the
+       spacing of everything around it just because it was an
+       svg tag. We set this explicitly to zero to avoid those
+       issues. */
+    margin-bottom: 0;
+    margin-top: 0;
+
+    /* We need to specify this for dark mode. */
+    fill: currentcolor;
 }
 
 .sl-markdown-content {
@@ -75,5 +104,29 @@
            recreated on the left side.  */
         box-shadow: -2px 0 0 6px var(--sl-color-accent-low);
         background-color: var(--sl-color-accent-low);
+    }
+
+    & kbd {
+        /* Same as kbd in app_components.css */
+        display: inline-block;
+        border: 1px solid hsl(0deg 0% 80%);
+        border-radius: 4px;
+        font-weight: 600;
+        white-space: nowrap;
+        background-color: hsl(0deg 0% 98%);
+        color: hsl(0deg 0% 20%);
+        text-shadow: 0 1px 0 hsl(0deg 0% 100%);
+        /* Different from app_components.css */
+        /* Removed margin setting */
+        font-size: 0.85em;
+        padding: 0 0.4em;
+
+        &.arrow-key {
+            /* Same as in informational_overlays.css */
+            line-height: 1;
+            padding: 0 0.2em 0.2em;
+            /* Different from informational_overlays.css */
+            font-size: 1.2em;
+        }
     }
 }

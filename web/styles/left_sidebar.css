@@ -14,6 +14,22 @@
     text-overflow: ellipsis;
 }
 
+#left-sidebar .input-element-wrapper {
+    /* We normalize this based on Firefox's 31px-tall input,
+       raising Chrome's (28px) and Safari's (30px) to all
+       match, so that `top:` and other offset values are
+       identical relative to input elements. This value
+       is taken up by the grid-template definition in
+       inputs.css. */
+    --input-element-row-height: 1.9375em;
+
+    .input-element {
+        /* And to keep the visual space of the input identical,
+           we stretch to the height of the grid row above. */
+        align-self: stretch;
+    }
+}
+
 #left-sidebar .unread_count {
     user-select: none;
 }
@@ -187,18 +203,6 @@
         &:hover {
             text-decoration: none;
         }
-    }
-}
-
-#left_sidebar_scroll_container {
-    outline: none;
-    overflow: hidden auto;
-    position: relative;
-    z-index: 0;
-    width: 100%;
-
-    .direct-messages-container {
-        margin-left: 0;
     }
 }
 
@@ -1065,6 +1069,22 @@ li.top_left_scheduled_messages {
     .filter-topics {
         grid-area: filter-input;
     }
+
+    /* Keep topic filters to a single line, and show
+       an ellipsis when the input loses focus. */
+    #left-sidebar-filter-topic-input {
+        flex-wrap: nowrap;
+
+        .pill {
+            flex-shrink: 0;
+        }
+
+        .input {
+            white-space: nowrap;
+            overflow-x: hidden;
+            text-overflow: ellipsis;
+        }
+    }
 }
 
 #views-label-container {
@@ -1904,6 +1924,10 @@ li.topic-list-item {
 }
 
 .zoom-in {
+    .narrow-filter.hide {
+        display: none;
+    }
+
     .narrow-filter > .bottom_left_row {
         position: sticky;
         /* We subtract a quarter pixel of space to correct

@@ -12,11 +12,6 @@ export default defineConfig({
             // eslint-disable-next-line new-cap
             Icons({
                 compiler: "astro",
-                // unplugin-icons sets height and width by itself.
-                // It was setting the height to 1024 and 960 for some
-                // icons. It is better to set the height explicitly.
-                defaultStyle:
-                    "display: inline; vertical-align: text-bottom; height: 1em; width: 1em; margin-bottom: 0;",
                 customCollections: {
                     // unplugin-icons has a FileSystemIconLoader which is more
                     // versatile. But it only supports one directory path for
@@ -33,6 +28,14 @@ export default defineConfig({
                         }
                         throw new Error("Zulip icon not found.");
                     },
+                },
+                iconCustomizer(collection, _icon, props) {
+                    if (collection === "zulip-icon") {
+                        // We need to override some default starlight behaviour to make
+                        // icons look nice, see the css for this class to see the reasoning
+                        // for each individual override of the default css.
+                        props.class = "zulip-unplugin-icon";
+                    }
                 },
             }),
         ],
@@ -82,8 +85,14 @@ export default defineConfig({
                     label: "Guides",
                     items: [
                         "getting-started-with-zulip",
-                        "choosing-a-team-chat-app",
-                        "why-zulip",
+                        {
+                            label: "Choosing a team chat app",
+                            link: "https://blog.zulip.com/2024/11/04/choosing-a-team-chat-app/",
+                        },
+                        {
+                            label: "Why Zulip",
+                            link: "https://zulip.com/why-zulip/",
+                        },
                         "trying-out-zulip",
                         "zulip-cloud-or-self-hosting",
                         "moving-to-zulip",

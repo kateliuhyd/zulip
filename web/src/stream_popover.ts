@@ -1,7 +1,7 @@
 import $ from "jquery";
 import assert from "minimalistic-assert";
 import type * as tippy from "tippy.js";
-import {z} from "zod";
+import * as z from "zod/mini";
 
 import render_inline_decorated_channel_name from "../templates/inline_decorated_channel_name.hbs";
 import render_inline_stream_or_topic_reference from "../templates/inline_stream_or_topic_reference.hbs";
@@ -106,14 +106,17 @@ function build_stream_popover(opts: {elt: HTMLElement; stream_id: number}): void
         return;
     }
 
+    const is_triggered_from_inbox = elt.classList.contains("inbox-stream-menu");
     const stream_hash = hash_util.channel_url_by_user_setting(stream_id);
     const show_go_to_channel_feed =
-        user_settings.web_channel_default_view !==
-            web_channel_default_view_values.channel_feed.code &&
+        (is_triggered_from_inbox ||
+            user_settings.web_channel_default_view !==
+                web_channel_default_view_values.channel_feed.code) &&
         !stream_data.is_empty_topic_only_channel(stream_id);
     const show_go_to_list_of_topics =
-        user_settings.web_channel_default_view !==
-            web_channel_default_view_values.list_of_topics.code &&
+        (is_triggered_from_inbox ||
+            user_settings.web_channel_default_view !==
+                web_channel_default_view_values.list_of_topics.code) &&
         !stream_data.is_empty_topic_only_channel(stream_id);
     const stream_unread = unread.unread_count_info_for_stream(stream_id);
     const stream_unread_count = stream_unread.unmuted_count + stream_unread.muted_count;
@@ -470,11 +473,11 @@ export async function build_move_topic_to_stream_popover(
 
     const params_schema = z.object({
         current_stream_id: z.string(),
-        new_topic_name: z.string().optional(),
+        new_topic_name: z.optional(z.string()),
         old_topic_name: z.string(),
-        propagate_mode: z.enum(["change_one", "change_later", "change_all"]).optional(),
-        send_notification_to_new_thread: z.literal("on").optional(),
-        send_notification_to_old_thread: z.literal("on").optional(),
+        propagate_mode: z.optional(z.enum(["change_one", "change_later", "change_all"])),
+        send_notification_to_new_thread: z.optional(z.literal("on")),
+        send_notification_to_old_thread: z.optional(z.literal("on")),
     });
 
     function get_params_from_form(): z.output<typeof params_schema> {
