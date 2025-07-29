@@ -6,7 +6,6 @@ from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import most_recent_message, most_recent_usermessage
 from zerver.models import AlertWord, UserProfile
 
-
 class AlertWordTests(ZulipTestCase):
     interesting_alert_word_list = ["alert", "multi-word word", "☃"]
 
@@ -149,7 +148,6 @@ class AlertWordTests(ZulipTestCase):
         )
         self.assert_json_error(result, "alert_words[0] is too long (limit: 100 characters)")
 
-
     def test_json_list_remove(self) -> None:
         user = self.get_user()
         self.login_user(user)
@@ -165,8 +163,6 @@ class AlertWordTests(ZulipTestCase):
         )
         response_dict = self.assert_json_success(result)
         self.assertEqual(set(response_dict["alert_words"]), {"two", "three"})
-
-        from zerver.models import AlertWord
 
         row = AlertWord.objects.get(user_profile=user, word__iexact="one")
         self.assertTrue(row.deactivated)
