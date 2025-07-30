@@ -6,6 +6,7 @@ from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import most_recent_message, most_recent_usermessage
 from zerver.models import AlertWord, UserProfile
 
+
 class AlertWordTests(ZulipTestCase):
     interesting_alert_word_list = ["alert", "multi-word word", "☃"]
 
