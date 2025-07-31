@@ -70,6 +70,8 @@ def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) ->
     # Keeping the case, use a dictionary to get the set of
     # case-insensitive distinct, new alert words
     word_dict: dict[str, str] = {}
+    alert_words_to_update: list[AlertWord] = []
+
     for word in new_words:
         lower_word = word.lower()
         # if the word already exists, we just reactivate it(soft delete)
@@ -79,9 +81,11 @@ def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) ->
             alert_word = existing_words_map[lower_word]
             if alert_word.deactivated:
                 alert_word.deactivated = False
-                alert_word.save()
+                alert_words_to_update.append(alert_word)
             continue
         word_dict[lower_word] = word
+
+    AlertWord.objects.bulk_update(alert_words_to_update, fields=["deactivated"])
 
     AlertWord.objects.bulk_create(
         AlertWord(user_profile=user_profile, word=word, realm=user_profile.realm)
