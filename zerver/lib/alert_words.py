@@ -47,62 +47,67 @@ def get_alert_word_automaton(realm: Realm) -> ahocorasick.Automaton:
 
 
 def user_alert_words(user_profile: UserProfile) -> list[str]:
-    return list(AlertWord.objects.filter(user_profile=user_profile, deactivated=False).values_list("word", flat=True))
-
-def user_alert_words_with_deactivated(user_profile: UserProfile) -> list[AlertWord]:
-    # returns all alert words for a user, including deactivated ones
-    # this is used to check for duplicates when adding new alert words
-    return list(AlertWord.objects.filter(user_profile=user_profile))
-
-
+    # Only active words for this user.
+    return list(
+        AlertWord.objects.filter(user_profile=user_profile, deactivated=False)
+        .values_list("word", flat=True)
+    )
+    
+    
 @transaction.atomic(savepoint=False)
 def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) -> list[str]:
-    existing_alert_words = user_alert_words_with_deactivated(user_profile)
+    # Normalize and dedupe once.
+    lower_words = {w.strip().lower() for w in new_words if w and w.strip()}
+    if not lower_words:
+        return list(
+            AlertWord.objects.filter(user_profile=user_profile, deactivated=False)
+            .values_list("word", flat=True)
+        )
 
-    existing_words_map = {
-        alert_word.word.lower(): alert_word for alert_word in existing_alert_words
-    }
-    # Keeping the case, use a dictionary to get the set of
-    # case-insensitive distinct, new alert words
+    # Query only the words being added (includes deactivated rows).
+    existing_alert_words = list(
+        AlertWord.objects.filter(user_profile=user_profile, word__in=lower_words)
+    )
+    existing_words_map = {aw.word.lower(): aw for aw in existing_alert_words}
+
+    # Keep original casing for creates; dict ensures case-insensitive dedupe.
     word_dict: dict[str, str] = {}
+    to_reactivate: list[AlertWord] = []
+
     for word in new_words:
         lower_word = word.lower()
-        # if the word already exists, we just reactivate it(soft delete)
-        # we activate it by setting deactivated to False instead of deleting it
-        # so that we can retain historical data for more accurate highlighting logic
         if lower_word in existing_words_map:
-            alert_word = existing_words_map[lower_word]
-            if alert_word.deactivated:
-                alert_word.deactivated = False
-                alert_word.save()
+            aw = existing_words_map[lower_word]
+            if aw.deactivated:
+                aw.deactivated = False
+                to_reactivate.append(aw)  # bulk_update later
             continue
-        word_dict[lower_word] = word
+        word_dict[lower_word] = word  # bulk_create later
 
-    AlertWord.objects.bulk_create(
-        AlertWord(user_profile=user_profile, word=word, realm=user_profile.realm)
-        for word in word_dict.values()
-    )
-    # Django bulk_create operations don't flush caches, so we need to do this ourselves.
-    flush_realm_alert_words(user_profile.realm_id)
+    if to_reactivate:
+        AlertWord.objects.bulk_update(to_reactivate, ["deactivated"])
+    if word_dict:
+        AlertWord.objects.bulk_create(
+            AlertWord(user_profile=user_profile, word=word, realm=user_profile.realm)
+            for word in word_dict.values()
+        )
+    if to_reactivate or word_dict:
+        # Flush once after writes.
+        flush_realm_alert_words(user_profile.realm_id)
 
     return list(
-        AlertWord.objects.filter(user_profile=user_profile, deactivated=False).values_list(
-            "word", flat=True
-        )
+        AlertWord.objects.filter(user_profile=user_profile, deactivated=False)
+        .values_list("word", flat=True)
     )
+
 
 @transaction.atomic(savepoint=False)
 def remove_user_alert_words(user_profile: UserProfile, delete_words: Iterable[str]) -> list[str]:
-    # TODO: Ideally, this would be a bulk query, but Django doesn't have a `__iexact`.
-    # We can clean this up if/when PostgreSQL has more native support for case-insensitive fields.
-    # If we turn this into a bulk operation, we will need to call flush_realm_alert_words() here.
+    # Soft-delete: mark as deactivated instead of deleting.
     for delete_word in delete_words:
-        # Mark the alert word as deactivated instead of deleting it.
-        # This is to retain historical data for more accurate highlighting logic
         AlertWord.objects.filter(user_profile=user_profile, word__iexact=delete_word).update(
             deactivated=True
         )
-
-    # Important: clear cache so that realm-level alert_words are updated
+    # Keep realm cache consistent.
     flush_realm_alert_words(user_profile.realm_id)
     return user_alert_words(user_profile)
